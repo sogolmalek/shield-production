@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Shield</title>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0C0D12;--s:#13141B;--s2:#191A23;--b:rgba(255,255,255,0.05);--t:#EAEAF0;--m:rgba(255,255,255,0.45);--d:rgba(255,255,255,0.22);--g:#34D399;--r:#EF4444;--y:#F59E0B;--a:#818CF8;--p:#F472B6}
+body{width:360px;min-height:500px;background:var(--bg);color:var(--t);font-family:'Inter',sans-serif;overflow-x:hidden}
+.hdr{padding:14px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--b);background:var(--s)}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-i{width:34px;height:34px;border-radius:10px;background:rgba(52,211,153,0.1);display:flex;align-items:center;justify-content:center;font-size:18px}
+.logo-n{font-size:16px;font-weight:700}
+.logo-v{font-size:9px;color:var(--d);padding:2px 6px;background:rgba(255,255,255,0.04);border-radius:4px;font-family:'JetBrains Mono',monospace;margin-left:6px}
+.st{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--g);font-weight:600}
+.st-d{width:7px;height:7px;border-radius:50%;background:var(--g);box-shadow:0 0 8px rgba(52,211,153,0.5)}
+.nav{display:flex;border-bottom:1px solid var(--b);background:var(--s)}
+.nb{flex:1;padding:10px 0;background:none;border:none;border-bottom:2px solid transparent;color:var(--m);font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;transition:all 0.2s}
+.nb.on{color:var(--t);border-bottom-color:var(--g);font-weight:600}
+.pg{display:none;padding:16px 20px}.pg.on{display:block}
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+.sc{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:12px}
+.sl{font-size:9px;text-transform:uppercase;letter-spacing:1.2px;color:var(--d);margin-bottom:5px;font-weight:500}
+.sv{font-size:20px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.ss{font-size:9px;color:var(--d);margin-top:2px}
+.fb{background:linear-gradient(135deg,rgba(52,211,153,0.06),rgba(129,140,248,0.06));border:1px solid rgba(52,211,153,0.1);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.fb-t{font-size:12px;font-weight:600;margin-bottom:4px}
+.fb-x{font-size:11px;color:var(--m);line-height:1.5}
+.fb-bar{height:4px;background:rgba(255,255,255,0.06);border-radius:2px;margin-top:8px;overflow:hidden}
+.fb-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--g),var(--a));transition:width 0.3s}
+.eb{background:rgba(239,68,68,0.04);border:1px solid rgba(239,68,68,0.1);border-radius:10px;padding:14px;margin-bottom:14px}
+.eb-t{font-size:12px;font-weight:600;color:var(--r);margin-bottom:4px}
+.eb-x{font-size:11px;color:var(--m);line-height:1.5}
+.cb{width:100%;padding:14px;border-radius:10px;border:none;background:linear-gradient(135deg,rgba(129,140,248,0.12),rgba(129,140,248,0.06));color:var(--a);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px;transition:all 0.2s}
+.cb:hover{background:linear-gradient(135deg,rgba(129,140,248,0.18),rgba(129,140,248,0.1));box-shadow:0 0 20px rgba(129,140,248,0.1)}
+.wc{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between}
+.wa{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--m)}
+.wb{font-size:13px;font-weight:600;color:var(--g);font-family:'JetBrains Mono',monospace}
+.wd{background:none;border:1px solid var(--b);color:var(--m);padding:4px 10px;border-radius:6px;font-size:10px;cursor:pointer;font-family:inherit}
+.sw{display:flex;gap:6px;margin-bottom:12px}
+.si{flex:1;background:var(--s);border:1px solid var(--b);border-radius:8px;padding:10px 12px;color:var(--t);font-family:'JetBrains Mono',monospace;font-size:11px;outline:none}
+.si::placeholder{color:var(--d)}.si:focus{border-color:rgba(52,211,153,0.25)}
+.sb{background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.15);color:var(--g);padding:10px 16px;border-radius:8px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.sb:hover{background:rgba(52,211,153,0.14)}
+.rs{background:var(--s);border:1px solid var(--b);border-radius:10px;padding:16px;display:none}.rs.show{display:block}
+.rt{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.rsc{font-size:36px;font-weight:800;font-family:'JetBrains Mono',monospace}
+.rv{font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;letter-spacing:0.5px}
+.rc{display:flex;flex-direction:column;gap:2px}
+.rr{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:6px;font-size:11px}
+.rr:nth-child(odd){background:rgba(255,255,255,0.015)}
+.rr .l{color:var(--m);display:flex;align-items:center;gap:6px}
+.rr .v{font-weight:600}
+.p{color:var(--g)}.f{color:var(--r)}.w{color:var(--y)}
+.xt{margin-top:12px;padding:8px 12px;border-radius:8px;background:rgba(129,140,248,0.05);border:1px solid rgba(129,140,248,0.1);display:flex;align-items:center;gap:8px;font-size:10px;color:var(--a)}
+.xd{width:5px;height:5px;border-radius:50%;background:var(--a);animation:bl 2s ease infinite}
+@keyframes bl{0%,100%{opacity:0.3}50%{opacity:1}}
+.sgrp{margin-bottom:16px}
+.stl{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--d);margin-bottom:8px;font-weight:500}
+.sr{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--s);border:1px solid var(--b);border-radius:8px;margin-bottom:6px}
+.srl{font-size:12px}.srd{font-size:10px;color:var(--d);margin-top:2px}
+.sin{background:var(--s2);border:1px solid var(--b);border-radius:6px;padding:8px 10px;color:var(--t);font-family:'JetBrains Mono',monospace;font-size:10px;outline:none;width:100%;margin-top:6px}
+.sin:focus{border-color:rgba(52,211,153,0.25)}
+.tg{width:36px;height:20px;background:rgba(255,255,255,0.08);border-radius:10px;position:relative;cursor:pointer;transition:background 0.2s}
+.tg.on{background:rgba(52,211,153,0.2)}
+.tg::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#555;transition:all 0.2s}
+.tg.on::after{left:19px;background:var(--g);box-shadow:0 0 6px rgba(52,211,153,0.4)}
+.sldr{flex:1;-webkit-appearance:none;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;outline:none}
+.sldr::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:var(--g);border-radius:50%;cursor:pointer}
+.slv{font-size:12px;font-weight:600;color:var(--g);font-family:'JetBrains Mono',monospace;min-width:24px;text-align:right}
+.ld{display:none;align-items:center;gap:8px;margin-bottom:12px;font-size:11px;color:var(--m)}.ld.show{display:flex}
+.spn{width:14px;height:14px;border:2px solid var(--b);border-top-color:var(--g);border-radius:50%;animation:sp 0.6s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.ft{padding:12px 20px;border-top:1px solid var(--b);display:flex;align-items:center;justify-content:space-between;font-size:9px;color:var(--d)}
+.ft a{color:var(--a);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="hdr">
+<div class="logo"><div class="logo-i">⛨</div><span class="logo-n">Shield</span><span class="logo-v">v1.0</span></div>
+<div class="st"><span id="stTxt">Active</span><span class="st-d" id="stDot"></span></div>
+</div>
+<div class="nav">
+<button class="nb on" data-p="home">Dashboard</button>
+<button class="nb" data-p="scan">Scan</button>
+<button class="nb" data-p="wallet">Wallet</button>
+<button class="nb" data-p="settings">Settings</button>
+</div>
+
+<div class="pg on" id="pg-home">
+<div class="fb" id="fBan"><div class="fb-t">🎉 Free Trial — <span id="fDays">3</span> days left</div><div class="fb-x"><span id="fUsed">0</span>/10 free scans used today. Connect a wallet after trial for unlimited scanning.</div><div class="fb-bar"><div class="fb-fill" id="fFill" style="width:0%"></div></div></div>
+<div class="eb" id="eBan" style="display:none"><div class="eb-t">Free trial ended</div><div class="eb-x">Connect your Phantom wallet to continue. $0.01 USDC per scan via x402.</div><button class="cb" style="margin-top:10px" id="connectWalletBtn"><span>👻</span> Connect Phantom</button></div>
+<div class="sg">
+<div class="sc"><div class="sl">Tokens Scanned</div><div class="sv" style="color:var(--g)" id="tScans">0</div><div class="ss">lifetime</div></div>
+<div class="sc"><div class="sl">Rugs Dodged</div><div class="sv" style="color:var(--r)" id="rDodge">0</div><div class="ss">potential losses avoided</div></div>
+<div class="sc"><div class="sl">x402 Spent</div><div class="sv" style="color:var(--a)" id="tSpent">$0.00</div><div class="ss">USDC on Solana</div></div>
+<div class="sc"><div class="sl">Protected For</div><div class="sv" style="color:var(--p)" id="dAct">0</div><div class="ss">days</div></div>
+</div></div>
+
+<div class="pg" id="pg-scan">
+<div style="font-size:10px;color:var(--d);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;font-weight:500">Quick Scan</div>
+<div class="sw"><input type="text" class="si" id="sIn" placeholder="Paste token address..." spellcheck="false"><button class="sb" id="sBtn">Scan</button></div>
+<div class="ld" id="sLd"><div class="spn"></div><span>Analyzing on-chain data...</span></div>
+<div class="rs" id="sRes">
+<div class="rt"><div><div style="font-size:9px;color:var(--d);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Shield Score</div><div class="rsc" id="rSc">—</div></div><div class="rv" id="rVd">—</div></div>
+<div class="rc" id="rCh"></div>
+<div style="font-size:9px;color:var(--d);word-break:break-all;margin-top:10px;padding-top:8px;border-top:1px solid var(--b)" id="rAd"></div>
+<div class="xt"><span class="xd"></span>Scanned via x402 · $0.01 USDC on Solana</div>
+</div></div>
+
+<div class="pg" id="pg-wallet">
+<div style="font-size:10px;color:var(--d);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;font-weight:500">Wallet</div>
+<div id="wDis">
+<div style="text-align:center;padding:20px 0">
+<div style="font-size:40px;margin-bottom:12px">👻</div>
+<div style="font-size:14px;font-weight:600;margin-bottom:6px">Connect Phantom Wallet</div>
+<div style="font-size:12px;color:var(--m);line-height:1.6;margin-bottom:20px;max-width:260px;margin:0 auto 20px">Shield uses x402 micropayments on Solana. Each scan = $0.01 USDC, settled instantly.</div>
+<button class="cb" id="connectWalletBtn2"><span>👻</span> Connect Phantom</button>
+</div>
+<div style="background:var(--s);border-radius:10px;border:1px solid var(--b);padding:14px;margin-top:12px">
+<div style="font-size:10px;color:var(--d);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:500">How Credits Work</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;gap:10px;font-size:11px"><span style="width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">1</span><span style="color:var(--m)">Connect Phantom → deposit USDC (any amount)</span></div>
+<div style="display:flex;align-items:center;gap:10px;font-size:11px"><span style="width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">2</span><span style="color:var(--m)">Each scan costs $0.01 — auto-deducted from balance</span></div>
+<div style="display:flex;align-items:center;gap:10px;font-size:11px"><span style="width:24px;height:24px;border-radius:6px;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">3</span><span style="color:var(--m)">$1 = 100 scans · $5 = 500 scans · $10 = 1000 scans</span></div>
+</div></div></div>
+<div id="wCon" style="display:none">
+<div class="wc"><div><div style="font-size:10px;color:var(--d);margin-bottom:2px">Connected</div><div class="wa" id="wAddr">7Fk9...3xYz</div></div><div style="text-align:right"><div class="wb" id="wBal">—</div><div style="font-size:9px;color:var(--d);margin-top:2px" id="wScans"></div></div></div>
+
+<div id="balSection" style="display:none;margin-top:10px;background:var(--s);border:1px solid var(--b);border-radius:10px;padding:14px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+<div style="font-size:10px;color:var(--d);text-transform:uppercase;letter-spacing:1px;font-weight:500">Balance</div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--g)" id="balValue">$0.00</div>
+</div>
+<div style="font-size:11px;color:var(--m)" id="balScans">0 scans remaining</div>
+</div>
+
+<div id="depSection" style="display:none;margin-top:10px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);border-radius:10px;padding:14px">
+<div style="font-size:11px;font-weight:600;color:var(--y);margin-bottom:6px">⚠ Low Balance</div>
+<div style="font-size:11px;color:var(--m);margin-bottom:10px">Deposit USDC to continue scanning. $1 = 100 scans.</div>
+<div style="display:flex;gap:6px;margin-bottom:8px">
+<button class="dep-btn dep1">$1</button>
+<button class="dep-btn dep5">$5</button>
+<button class="dep-btn dep10">$10</button>
+</div>
+<input type="hidden" id="depAmount" value="5">
+</div>
+
+<div style="margin-top:10px;display:flex;gap:6px">
+<button class="cb" style="flex:1;font-size:11px" id="depositBtn">💳 Deposit USDC</button>
+<button class="wd" id="disconnectWalletBtn">Disconnect</button>
+</div>
+</div></div>
+
+<div class="pg" id="pg-settings">
+<div style="font-size:10px;color:var(--d);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px;font-weight:500">Settings</div>
+<div class="sgrp"><div class="stl">Protection</div>
+<div class="sr"><div><div class="srl">Enable Shield</div><div class="srd">Scan tokens on all websites</div></div><div class="tg on" id="tgShield"></div></div>
+<div class="sr"><div><div class="srl">Swap Warnings</div><div class="srd">Show alerts on Jupiter & Raydium</div></div><div class="tg on" id="tgSwap"></div></div></div>
+<div class="sgrp"><div class="stl">Alert Threshold</div>
+<div class="sr" style="flex-direction:column;align-items:stretch">
+<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span class="srl">Warn below score</span><span class="slv" id="thVal">30</span></div>
+<input type="range" class="sldr" id="thSldr" min="10" max="70" value="30">
+<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--d);margin-top:4px"><span>Aggressive</span><span>Conservative</span></div>
+</div></div>
+<div class="sgrp"><div class="stl">API Keys (Optional)</div>
+<div class="sr" style="flex-direction:column;align-items:stretch"><div class="srl">Helius API Key</div><div class="srd">Enhanced on-chain data · helius.dev</div>
+<input type="text" class="sin" id="hKey" placeholder="Enter key..." spellcheck="false"></div></div>
+<div class="sgrp"><div class="stl">Excluded Sites</div>
+<div class="sr" style="flex-direction:column;align-items:stretch"><div class="srd">Shield won't scan on these domains</div>
+<textarea class="sin" id="exSites" placeholder="github.com&#10;stackoverflow.com" rows="3" style="resize:vertical;font-family:'JetBrains Mono',monospace"></textarea></div></div>
+</div>
+
+<div class="ft"><span>Powered by x402 on Solana</span><a href="https://github.com/shield-x402" target="_blank">GitHub ↗</a></div>
+<style>
+.dep-btn{flex:1;padding:8px;border:1px solid var(--b);border-radius:7px;background:var(--s2);color:var(--t);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.dep-btn:hover{border-color:var(--g);color:var(--g);background:rgba(52,211,153,0.06)}
+</style>
+<script src="popup.js"></script>
+</body></html>

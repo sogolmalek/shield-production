@@ -1,0 +1,413 @@
+/* ── Shield × LI.FI — Swap Modal Styles ── */
+
+/* Buy Button in Tooltip */
+.shield-tooltip-buy {
+  padding: 8px 0 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  margin-top: 6px;
+}
+
+.shield-buy-btn {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  letter-spacing: 0.3px;
+}
+
+.shield-buy-btn:hover {
+  background: linear-gradient(135deg, #818cf8, #a78bfa);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99,102,241,0.3);
+}
+
+.shield-buy-btn.shield-buy-blocked {
+  background: #991b1b;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.shield-buy-btn.shield-buy-blocked:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Overlay */
+.shield-lifi-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  animation: shieldFadeIn 0.2s ease;
+}
+
+@keyframes shieldFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Modal */
+.shield-lifi-modal {
+  background: #0f1318;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  width: 420px;
+  max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  animation: shieldSlideUp 0.25s ease;
+  color: #e2e8f0;
+}
+
+@keyframes shieldSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Header */
+.shield-lifi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.shield-lifi-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.shield-lifi-logo {
+  font-size: 18px;
+  color: #6366f1;
+}
+
+.shield-lifi-powered {
+  font-size: 10px;
+  color: #64748b;
+  background: rgba(100,116,139,0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.shield-lifi-close {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.shield-lifi-close:hover {
+  background: rgba(255,255,255,0.08);
+  color: #e2e8f0;
+}
+
+/* Score Bar */
+.shield-lifi-score-bar {
+  margin: 12px 20px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 8px;
+}
+
+.shield-lifi-score-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.shield-lifi-score-label {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.shield-lifi-score-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.shield-lifi-warning-text {
+  font-size: 11px;
+  color: #F59E0B;
+  margin-top: 6px;
+}
+
+/* Token Target */
+.shield-lifi-token-target {
+  margin: 0 20px;
+  padding: 10px 14px;
+  background: rgba(99,102,241,0.08);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.shield-lifi-addr {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: #a5b4fc;
+}
+
+/* Form */
+.shield-lifi-form {
+  padding: 16px 20px;
+}
+
+.shield-lifi-field {
+  margin-bottom: 14px;
+}
+
+.shield-lifi-label {
+  display: block;
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.shield-lifi-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: #1a1f2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 14px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+.shield-lifi-select:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.shield-lifi-select option {
+  background: #1a1f2e;
+  color: #e2e8f0;
+}
+
+.shield-lifi-pay-row {
+  display: flex;
+  gap: 8px;
+}
+
+.shield-lifi-select-sm {
+  flex: 1;
+}
+
+.shield-lifi-input {
+  flex: 1;
+  padding: 10px 12px;
+  background: #1a1f2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shield-lifi-input:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.shield-lifi-input::placeholder {
+  color: #475569;
+}
+
+/* Quote Box */
+.shield-lifi-quote-box {
+  background: rgba(52,211,153,0.06);
+  border: 1px solid rgba(52,211,153,0.15);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.shield-lifi-quote-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  padding: 3px 0;
+}
+
+.shield-lifi-quote-detail {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.shield-lifi-receive {
+  font-weight: 700;
+  color: #34D399;
+  font-size: 15px;
+}
+
+/* Loading */
+.shield-lifi-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.shield-lifi-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(99,102,241,0.2);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: shieldSpin 0.6s linear infinite;
+}
+
+@keyframes shieldSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Error */
+.shield-lifi-error {
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.2);
+  color: #fca5a5;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+
+/* Buttons */
+.shield-lifi-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+
+.shield-lifi-btn-quote {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+}
+
+.shield-lifi-btn-quote:hover {
+  background: linear-gradient(135deg, #818cf8, #a78bfa);
+  box-shadow: 0 4px 16px rgba(99,102,241,0.3);
+}
+
+.shield-lifi-btn-swap {
+  background: linear-gradient(135deg, #059669, #10b981);
+  color: white;
+  margin-top: 8px;
+}
+
+.shield-lifi-btn-swap:hover:not(:disabled) {
+  background: linear-gradient(135deg, #047857, #059669);
+  box-shadow: 0 4px 16px rgba(16,185,129,0.3);
+}
+
+.shield-lifi-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Footer */
+.shield-lifi-footer {
+  padding: 12px 20px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #475569;
+}
+
+/* Blocked Modal */
+.shield-lifi-blocked .shield-lifi-header {
+  border-bottom-color: rgba(239,68,68,0.2);
+}
+
+.shield-lifi-blocked-content {
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.shield-lifi-blocked-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.shield-lifi-blocked-score {
+  font-size: 24px;
+  font-weight: 800;
+  color: #EF4444;
+}
+
+.shield-lifi-blocked-verdict {
+  font-size: 14px;
+  color: #fca5a5;
+  margin-bottom: 16px;
+}
+
+.shield-lifi-blocked-text {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+
+.shield-lifi-blocked-addr {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #64748b;
+  background: rgba(255,255,255,0.04);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 20px;
+  word-break: break-all;
+}
+
+.shield-lifi-btn-close {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.shield-lifi-btn-close:hover {
+  background: #334155;
+  color: #e2e8f0;
+}

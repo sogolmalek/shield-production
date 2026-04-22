@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "Shield — Rug Score Everywhere",
+  "version": "1.2.0",
+  "description": "Real-time rug scores on every Solana token. Buy safe from any chain via LI.FI.",
+
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "scripting",
+    "notifications"
+  ],
+
+  "host_permissions": [
+    "https://shield-production-8awh.onrender.com/*",
+    "https://li.quest/*",
+    "https://jumper.exchange/*",
+    "https://phantom.app/*",
+    "https://*.dexscreener.com/*",
+    "https://birdeye.so/*",
+    "https://solscan.io/*",
+    "https://explorer.solana.com/*",
+    "https://jup.ag/*",
+    "https://raydium.io/*",
+    "https://twitter.com/*",
+    "https://x.com/*"
+  ],
+
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "background": {
+    "service_worker": "src/background.js"
+  },
+
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js":  ["src/lifi.js", "src/content.js"],
+    "css": ["src/content.css", "src/lifi.css"],
+    "run_at": "document_idle"
+  }],
+
+  "web_accessible_resources": [{
+    "resources": ["src/bridge.js", "icons/*"],
+    "matches":   ["<all_urls>"]
+  }]
+}

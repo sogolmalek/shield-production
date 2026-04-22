@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: shield-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    # ── Set these in Render Dashboard → Environment, NOT here ──
+    # ALCHEMY_RPC   → https://dashboard.alchemy.com
+    # GOLDRUSH_API_KEY → https://goldrush.dev
+    envVars:
+      - key: ALCHEMY_RPC
+        sync: false
+      - key: GOLDRUSH_API_KEY
+        sync: false

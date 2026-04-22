@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shield — Rug Score Everywhere</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>⛨</text></svg>">
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0C0D12;overflow-x:hidden}#root{min-height:100vh}</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.10/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+/* ═══════════════════════════════════════════
+   SHIELD — Rug Score Everywhere
+   Elegant fintech design + x402 business model
+   ═══════════════════════════════════════════ */
+
+// ── Data ──
+const TOKENS = [
+  { name: "dogwifhat", ticker: "WIF", addr: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", price: "$2.41", change: "+34.2%", vol: "$847M", mcap: "$2.4B", up: true, logo: "🐕" },
+  { name: "Bonk", ticker: "BONK", addr: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", price: "$0.0000284", change: "+12.8%", vol: "$341M", mcap: "$1.8B", up: true, logo: "🦴" },
+  { name: "ScamDog Inu", ticker: "SCAM", addr: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", price: "$0.00041", change: "+1842%", vol: "$2.1M", mcap: "$410K", up: true, logo: "🐶" },
+  { name: "RugToken", ticker: "RUG", addr: "9nEqaUcb16sQ3Tn1psbkWqyhPdLmfHWjKGymREjsAgTE", price: "$0.0000012", change: "-94.2%", vol: "$89K", mcap: "$12K", up: false, logo: "💀" },
+  { name: "Popcat", ticker: "POPCAT", addr: "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", price: "$0.94", change: "+8.4%", vol: "$124M", mcap: "$912M", up: true, logo: "🐱" },
+  { name: "HoneyTrap", ticker: "HONEY", addr: "3bRTivrVsitbmCTGtqwp7hxXPsybkjn4XLNtPsHqa3zR", price: "$0.0082", change: "+427%", vol: "$740K", mcap: "$82K", up: true, logo: "🍯" },
+  { name: "Jupiter", ticker: "JUP", addr: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", price: "$1.12", change: "+3.1%", vol: "$89M", mcap: "$1.5B", up: true, logo: "🪐" },
+  { name: "FakeAI", ticker: "FAI", addr: "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", price: "$0.00031", change: "+2100%", vol: "$1.8M", mcap: "$310K", up: true, logo: "🤖" },
+];
+
+function getScore(addr) {
+  let h = 0;
+  for (let i = 0; i < addr.length; i++) h = ((h << 5) - h + addr.charCodeAt(i)) | 0;
+  const s = Math.abs(h);
+  const mintOk = (s % 7) !== 0, freezeOk = (s % 5) !== 0, lpOk = (s % 4) !== 0;
+  const topH = 5 + (s % 60), devW = s % 35, honey = (s % 13) === 0;
+  const liq = 1000 + (s % 5000000), age = 1 + (s % 720);
+  let sc = 50;
+  if (mintOk) sc += 15; else sc -= 25;
+  if (freezeOk) sc += 10; else sc -= 20;
+  if (lpOk) sc += 12; else sc -= 15;
+  if (topH < 15) sc += 10; else if (topH > 40) sc -= 15;
+  if (devW < 5) sc += 8; else if (devW > 20) sc -= 20;
+  if (honey) sc -= 40;
+  if (liq > 100000) sc += 5;
+  if (age > 168) sc += 5;
+  sc = Math.max(0, Math.min(100, sc));
+  return {
+    score: sc,
+    tier: sc >= 70 ? "safe" : sc >= 50 ? "caution" : sc >= 30 ? "warning" : "danger",
+    verdict: sc >= 70 ? "Low Risk" : sc >= 50 ? "Moderate" : sc >= 30 ? "High Risk" : "Extreme Risk",
+    checks: [
+      { name: "Mint Authority", ok: mintOk, val: mintOk ? "Revoked" : "Active" },
+      { name: "Freeze Authority", ok: freezeOk, val: freezeOk ? "Revoked" : "Active" },
+      { name: "LP Lock", ok: lpOk, val: lpOk ? "Locked" : "Unlocked" },
+      { name: "Top Holder", ok: topH < 25, warn: topH >= 25 && topH < 40, val: topH + "%" },
+      { name: "Dev Wallet", ok: devW < 10, warn: devW >= 10 && devW < 20, val: devW + "%" },
+      { name: "Honeypot", ok: !honey, val: honey ? "Detected" : "Clean" },
+      { name: "Liquidity", ok: liq > 50000, warn: liq >= 10000 && liq < 50000, val: "$" + (liq >= 1e6 ? (liq/1e6).toFixed(1)+"M" : (liq/1e3).toFixed(0)+"K") },
+      { name: "Token Age", ok: age > 72, warn: age >= 24 && age < 72, val: age > 48 ? Math.floor(age/24)+"d" : age+"h" },
+    ]
+  };
+}
+
+// ── Colors ──
+const C = {
+  bg: "#0C0D12", surface: "#13141B", surfaceHover: "#191A23",
+  border: "rgba(255,255,255,0.05)", borderLight: "rgba(255,255,255,0.08)",
+  text: "#EAEAF0", textMuted: "rgba(255,255,255,0.45)", textDim: "rgba(255,255,255,0.22)",
+  safe: "#34D399", caution: "#FBBF24", warning: "#F59E0B", danger: "#EF4444",
+  accent: "#818CF8", accentBg: "rgba(129,140,248,0.08)",
+};
+const tierC = { safe: C.safe, caution: C.caution, warning: C.warning, danger: C.danger };
+const tierBg = { safe: "rgba(52,211,153,0.08)", caution: "rgba(251,191,36,0.08)", warning: "rgba(245,158,11,0.08)", danger: "rgba(239,68,68,0.08)" };
+
+// ── Components ──
+function ScorePill({ score, tier, size = "sm", onClick }) {
+  const sizes = { sm: { fs: 11, px: 7, py: 2, dot: 5, gap: 4 }, md: { fs: 13, px: 10, py: 4, dot: 6, gap: 5 } };
+  const s = sizes[size];
+  return (
+    <button onClick={onClick} style={{
+      display: "inline-flex", alignItems: "center", gap: s.gap,
+      padding: `${s.py}px ${s.px}px`, borderRadius: 6,
+      background: tierBg[tier], border: `1px solid ${tierC[tier]}18`,
+      color: tierC[tier], fontSize: s.fs, fontWeight: 600,
+      cursor: onClick ? "pointer" : "default", fontFamily: "inherit",
+      transition: "all 0.2s ease",
+    }}
+    onMouseEnter={e => { if(onClick) { e.currentTarget.style.boxShadow = `0 0 16px ${tierC[tier]}20`; e.currentTarget.style.borderColor = `${tierC[tier]}30`; }}}
+    onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = `${tierC[tier]}18`; }}
+    >
+      <span style={{ width: s.dot, height: s.dot, borderRadius: "50%", background: tierC[tier] }} />
+      {score}
+    </button>
+  );
+}
+
+function DetailDrawer({ data, onClose }) {
+  if (!data) return null;
+  const { token, info } = data;
+  return (
+    <>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", zIndex: 999 }} />
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: Math.min(400, window.innerWidth - 20),
+        background: C.surface, borderLeft: `1px solid ${C.border}`, zIndex: 1000,
+        display: "flex", flexDirection: "column", animation: "drawerIn 0.25s ease",
+      }}>
+        <style>{`@keyframes drawerIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
+        
+        <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>{token.logo}</span>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>{token.name}</div>
+              <div style={{ fontSize: 11, color: C.textMuted }}>{token.ticker}</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.05)", border: "none", color: C.textMuted, width: 32, height: 32, borderRadius: 8, cursor: "pointer", fontSize: 16 }}>×</button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <div style={{ fontSize: 56, fontWeight: 700, color: tierC[info.tier], lineHeight: 1 }}>{info.score}</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>out of 100</div>
+            <div style={{
+              display: "inline-block", marginTop: 10, padding: "4px 14px", borderRadius: 20,
+              background: tierBg[info.tier], color: tierC[info.tier],
+              fontSize: 12, fontWeight: 600, letterSpacing: 0.5,
+            }}>{info.verdict}</div>
+          </div>
+
+          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>Security Checks</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {info.checks.map((c, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "10px 12px", borderRadius: 8,
+                background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
+              }}>
+                <span style={{ fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{
+                    width: 18, height: 18, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 700,
+                    background: c.ok ? "rgba(52,211,153,0.1)" : c.warn ? "rgba(251,191,36,0.1)" : "rgba(239,68,68,0.1)",
+                    color: c.ok ? C.safe : c.warn ? C.warning : C.danger,
+                  }}>{c.ok ? "✓" : c.warn ? "!" : "✗"}</span>
+                  {c.name}
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: c.ok ? C.safe : c.warn ? C.warning : C.danger }}>{c.val}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 24, padding: 14, background: C.accentBg, borderRadius: 10, border: `1px solid ${C.accent}12` }}>
+            <div style={{ fontSize: 10, color: C.accent, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>x402 Transaction</div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+              <span style={{ color: C.textMuted }}>Scan cost</span>
+              <span style={{ color: C.accent, fontWeight: 600 }}>0.01 USDC</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+              <span style={{ color: C.textMuted }}>Network</span>
+              <span style={{ color: C.accent, fontWeight: 600 }}>Solana</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginTop: 4 }}>
+              <span style={{ color: C.textMuted }}>Finality</span>
+              <span style={{ color: C.accent, fontWeight: 600 }}>~400ms</span>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16, fontSize: 10, color: C.textDim, wordBreak: "break-all", padding: "10px 0", borderTop: `1px solid ${C.border}` }}>
+            {token.addr}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Views ──
+function DexView({ tokens, loaded, onSelect }) {
+  return (
+    <div style={{ padding: "16px 20px" }}>
+      <div style={{ background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 80px", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, fontSize: 10, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, fontWeight: 500 }}>
+          <span>Token</span><span style={{textAlign:"right"}}>Price</span><span style={{textAlign:"right"}}>24h</span><span style={{textAlign:"right"}}>Volume</span><span style={{textAlign:"center"}}>Score</span>
+        </div>
+        {tokens.map((t, i) => {
+          const info = getScore(t.addr);
+          const show = loaded.includes(t.addr);
+          return (
+            <div key={i} style={{
+              display: "grid", gridTemplateColumns: "2.5fr 1fr 1fr 1fr 80px",
+              padding: "14px 16px", borderBottom: `1px solid ${C.border}`,
+              alignItems: "center", cursor: "pointer", transition: "background 0.15s",
+              background: show && info.score < 30 ? "rgba(239,68,68,0.03)" : "transparent",
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+            onMouseLeave={e => e.currentTarget.style.background = show && info.score < 30 ? "rgba(239,68,68,0.03)" : "transparent"}
+            onClick={() => show && onSelect({ token: t, info })}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 18, width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center" }}>{t.logo}</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{t.name}</div>
+                  <div style={{ fontSize: 10, color: C.textDim }}>{t.ticker}</div>
+                </div>
+              </div>
+              <div style={{ textAlign: "right", fontSize: 12 }}>{t.price}</div>
+              <div style={{ textAlign: "right", fontSize: 12, color: t.up ? C.safe : C.danger, fontWeight: 500 }}>{t.change}</div>
+              <div style={{ textAlign: "right", fontSize: 12, color: C.textMuted }}>{t.vol}</div>
+              <div style={{ textAlign: "center" }}>
+                {show ? <ScorePill score={info.score} tier={info.tier} /> : (
+                  <div style={{ width: 40, height: 24, borderRadius: 6, background: "rgba(255,255,255,0.03)", margin: "0 auto", animation: "pulse 1.5s ease infinite" }} />
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 0.8; } }`}</style>
+    </div>
+  );
+}
+
+function TwitterView({ tokens, loaded, onSelect }) {
+  const tweets = [
+    { user: "SolAlphaCalls", handle: "@sol_alpha_calls", avatar: "🎯", verified: false, time: "2m", text: "Just aped into $SCAM — this is the next 100x gem 🚀🚀🚀", tokenIdx: 2, engagement: { likes: 47, rt: 12, replies: 89 } },
+    { user: "Whale Watcher", handle: "@whale_watcher", avatar: "🐋", verified: true, time: "8m", text: "Smart money alert: Whale wallet just accumulated $2.1M worth of $WIF. Following the flow.", tokenIdx: 0, engagement: { likes: 312, rt: 89, replies: 45 } },
+    { user: "DegenTrader", handle: "@degen_trader99", avatar: "🎰", verified: false, time: "14m", text: "FREE MONEY!! $RUG is about to pump insanely hard! Don't miss this one!", tokenIdx: 3, engagement: { likes: 8, rt: 3, replies: 142 } },
+    { user: "Real Analysis", handle: "@real_analysis", avatar: "📊", verified: true, time: "22m", text: "Solid fundamentals on $BONK — team is doxxed, LP locked for 2 years. Accumulating here.", tokenIdx: 1, engagement: { likes: 891, rt: 234, replies: 67 } },
+  ];
+
+  return (
+    <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+      {tweets.map((tw, i) => {
+        const token = tokens[tw.tokenIdx];
+        const info = getScore(token.addr);
+        const show = loaded.includes(token.addr);
+        const isDangerous = show && info.score < 30;
+        return (
+          <div key={i} style={{
+            background: C.surface, borderRadius: 14, border: `1px solid ${isDangerous ? "rgba(239,68,68,0.12)" : C.border}`,
+            padding: 16, transition: "border-color 0.2s",
+          }}>
+            {/* Author row */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div style={{ width: 38, height: 38, borderRadius: "50%", background: "rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>{tw.avatar}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{tw.user}</span>
+                  {tw.verified && <span style={{ fontSize: 10, color: C.accent }}>✓</span>}
+                </div>
+                <div style={{ fontSize: 11, color: C.textDim }}>{tw.handle}</div>
+              </div>
+              <span style={{ fontSize: 11, color: C.textDim }}>{tw.time}</span>
+            </div>
+
+            {/* Tweet text */}
+            <div style={{ fontSize: 14, lineHeight: 1.6, color: "rgba(255,255,255,0.8)", marginBottom: 12 }}>
+              {tw.text}
+            </div>
+
+            {/* Token card inline */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "10px 12px", borderRadius: 10,
+              background: isDangerous ? "rgba(239,68,68,0.04)" : "rgba(255,255,255,0.02)",
+              border: `1px solid ${isDangerous ? "rgba(239,68,68,0.08)" : C.border}`,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14 }}>{token.logo}</span>
+                <div>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{token.ticker}</span>
+                  <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 6 }}>{token.price}</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: token.up ? C.safe : C.danger, fontWeight: 500 }}>{token.change}</span>
+                {show && <ScorePill score={info.score} tier={info.tier} onClick={() => onSelect({ token, info })} />}
+              </div>
+            </div>
+
+            {/* Warning banner for dangerous tokens */}
+            {isDangerous && (
+              <div style={{
+                marginTop: 10, padding: "8px 12px", borderRadius: 8,
+                background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.1)",
+                display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.danger,
+              }}>
+                <span style={{ fontSize: 14 }}>⛨</span>
+                <span>Shield flagged this token: <strong>{info.score}/100</strong> — {info.verdict}. {!info.checks[0].ok ? "Mint authority still active. " : ""}{!info.checks[5].ok ? "Honeypot detected." : ""}</span>
+              </div>
+            )}
+
+            {/* Engagement */}
+            <div style={{ display: "flex", gap: 20, marginTop: 12, fontSize: 11, color: C.textDim }}>
+              <span>💬 {tw.engagement.replies}</span>
+              <span>🔄 {tw.engagement.rt}</span>
+              <span>❤️ {tw.engagement.likes}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SwapView({ tokens, loaded, onSelect }) {
+  const dangerToken = tokens[3];
+  const info = getScore(dangerToken.addr);
+  const show = loaded.includes(dangerToken.addr);
+
+  return (
+    <div style={{ padding: "16px 20px", maxWidth: 440, margin: "0 auto" }}>
+      {show && info.score < 40 && (
+        <div style={{
+          background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.1)",
+          borderRadius: 14, padding: 16, marginBottom: 16,
+          display: "flex", gap: 12, alignItems: "flex-start",
+        }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(239,68,68,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>⛨</div>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.danger, marginBottom: 4 }}>Shield Warning</div>
+            <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>
+              <strong style={{ color: C.danger }}>{dangerToken.name}</strong> scored {info.score}/100.
+              {!info.checks[0].ok ? " Mint authority is still active —  the team can print unlimited tokens." : ""}
+              {!info.checks[2].ok ? " Liquidity is unlocked — it can be pulled at any time." : ""}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: C.surface, borderRadius: 16, border: `1px solid ${C.border}`, padding: 20 }}>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>You pay</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: "rgba(255,255,255,0.02)", borderRadius: 10, border: `1px solid ${C.border}`, marginBottom: 8 }}>
+          <span style={{ fontSize: 24, fontWeight: 600 }}>100</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 8 }}>
+            <span style={{ fontSize: 14 }}>💲</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>USDC</span>
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center", padding: "4px 0", color: C.textDim }}>
+          <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 4v12M6 12l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round"/></svg>
+        </div>
+
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>You receive</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", background: "rgba(255,255,255,0.02)", borderRadius: 10, border: `1px solid ${show && info.score < 30 ? "rgba(239,68,68,0.15)" : C.border}`, marginBottom: 20 }}>
+          <span style={{ fontSize: 24, fontWeight: 600 }}>83,333</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 8 }}>
+              <span style={{ fontSize: 14 }}>{dangerToken.logo}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{dangerToken.ticker}</span>
+            </div>
+            {show && <ScorePill score={info.score} tier={info.tier} size="md" onClick={() => onSelect({ token: dangerToken, info })} />}
+          </div>
+        </div>
+
+        <button style={{
+          width: "100%", padding: 16, borderRadius: 12, border: "none",
+          background: info.score < 30 ? "rgba(239,68,68,0.1)" : `linear-gradient(135deg, ${C.safe}20, ${C.safe}10)`,
+          color: info.score < 30 ? C.danger : C.safe,
+          fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer",
+          transition: "all 0.2s",
+        }}>
+          {info.score < 30 ? "⛨  Swap at Your Own Risk" : "Swap"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BusinessView() {
+  const [day, setDay] = useState(0);
+  useEffect(() => { const t = setInterval(() => setDay(d => Math.min(d + 1, 30)), 120); return () => clearInterval(t); }, []);
+
+  const dailyScans = [0, 1200, 3400, 5800, 8200, 14000, 19000, 28000, 42000, 58000, 71000, 89000, 110000, 135000, 158000, 180000, 210000, 245000, 280000, 320000, 370000, 420000, 480000, 550000, 620000, 710000, 800000, 900000, 1020000, 1150000, 1300000];
+  const totalScans = dailyScans.slice(0, day + 1).reduce((a, b) => a + b, 0);
+  const revenue = totalScans * 0.01;
+  const commission = revenue * 0.20;
+  const maxVal = Math.max(...dailyScans.slice(0, day + 1));
+
+  return (
+    <div style={{ padding: "20px 20px" }}>
+      {/* Revenue overview */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
+        {[
+          { label: "Total Scans", value: totalScans >= 1e6 ? (totalScans/1e6).toFixed(1)+"M" : totalScans >= 1e3 ? (totalScans/1e3).toFixed(0)+"K" : totalScans, color: C.safe },
+          { label: "Gross Revenue", value: "$" + (revenue >= 1000 ? (revenue/1000).toFixed(1)+"K" : revenue.toFixed(0)), color: C.accent },
+          { label: "Your Commission (20%)", value: "$" + (commission >= 1000 ? (commission/1000).toFixed(1)+"K" : commission.toFixed(0)), color: "#F472B6" },
+        ].map((s, i) => (
+          <div key={i} style={{ background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, padding: 14 }}>
+            <div style={{ fontSize: 9, color: C.textDim, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 6 }}>{s.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <div style={{ background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 12 }}>Daily Scan Volume — Day {day}/30</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 100 }}>
+          {dailyScans.slice(0, day + 1).map((v, i) => (
+            <div key={i} style={{
+              flex: 1, borderRadius: "3px 3px 0 0",
+              height: maxVal > 0 ? Math.max(2, (v / maxVal) * 100) : 2,
+              background: `linear-gradient(180deg, ${C.safe}, ${C.safe}40)`,
+              transition: "height 0.3s ease",
+            }} />
+          ))}
+        </div>
+      </div>
+
+      {/* Business model */}
+      <div style={{ background: C.surface, borderRadius: 12, border: `1px solid ${C.border}`, padding: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 14 }}>x402 Revenue Model</div>
+        {[
+          { icon: "👤", label: "User scans token", flow: "→  $0.01 USDC via x402" },
+          { icon: "⛨", label: "SHIELD processes", flow: "→  On-chain data + AI scoring" },
+          { icon: "💰", label: "Revenue split", flow: "→  80% data providers · 20% SHIELD" },
+          { icon: "⚡", label: "Settlement", flow: "→  Instant on Solana (~400ms)" },
+        ].map((r, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < 3 ? `1px solid ${C.border}` : "none" }}>
+            <span style={{ fontSize: 16, width: 32, height: 32, borderRadius: 8, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center" }}>{r.icon}</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 500 }}>{r.label}</div>
+              <div style={{ fontSize: 11, color: C.textMuted }}>{r.flow}</div>
+            </div>
+          </div>
+        ))}
+
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: C.accentBg, border: `1px solid ${C.accent}15` }}>
+          <div style={{ fontSize: 10, color: C.accent, fontWeight: 600, marginBottom: 6 }}>Scale Projection</div>
+          <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.6 }}>
+            Solana averages <strong style={{ color: C.text }}>~2M token trades/day</strong>. 
+            If 5% of traders use Shield = <strong style={{ color: C.text }}>100K scans/day</strong> = 
+            <strong style={{ color: C.safe }}> $1,000/day gross</strong>. 
+            Your 20% commission = <strong style={{ color: "#F472B6" }}>$200/day → $73K/year</strong>.
+            At 20% adoption → <strong style={{ color: "#F472B6" }}>$292K/year</strong>.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main ──
+function ShieldApp() {
+  const [view, setView] = useState("dex");
+  const [loaded, setLoaded] = useState([]);
+  const [detail, setDetail] = useState(null);
+  const [scanCount, setScanCount] = useState(0);
+
+  useEffect(() => {
+    TOKENS.forEach((t, i) => {
+      setTimeout(() => {
+        setLoaded(prev => [...prev, t.addr]);
+        setScanCount(prev => prev + 1);
+      }, 400 + i * 250);
+    });
+  }, []);
+
+  const tabs = [
+    { id: "dex", label: "Token Scanner", icon: "📊" },
+    { id: "twitter", label: "Social Feed", icon: "🐦" },
+    { id: "swap", label: "Swap Guard", icon: "🔄" },
+    { id: "business", label: "x402 Revenue", icon: "💰" },
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(52,211,153,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 18 }}>⛨</span>
+          </div>
+          <div>
+            <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 1 }}>Shield</span>
+            <span style={{ fontSize: 10, color: C.textDim, marginLeft: 8, padding: "2px 6px", background: "rgba(255,255,255,0.04)", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace" }}>v1.0</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: C.textDim }}>Scans</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.safe, fontFamily: "'JetBrains Mono', monospace" }}>{scanCount}</div>
+          </div>
+          <div style={{ width: 1, height: 24, background: C.border }} />
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: C.textDim }}>x402 cost</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.accent, fontFamily: "'JetBrains Mono', monospace" }}>${(scanCount * 0.01).toFixed(2)}</div>
+          </div>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.safe, boxShadow: `0 0 8px ${C.safe}60` }} />
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 12px", overflowX: "auto" }}>
+        {tabs.map(tab => (
+          <button key={tab.id} onClick={() => setView(tab.id)} style={{
+            padding: "12px 14px", background: "none",
+            border: "none", borderBottom: `2px solid ${view === tab.id ? C.safe : "transparent"}`,
+            color: view === tab.id ? C.text : C.textMuted,
+            fontSize: 12, fontWeight: view === tab.id ? 600 : 400,
+            cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s",
+            display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+          }}>
+            <span style={{ fontSize: 13 }}>{tab.icon}</span>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      {view === "dex" && <DexView tokens={TOKENS} loaded={loaded} onSelect={setDetail} />}
+      {view === "twitter" && <TwitterView tokens={TOKENS} loaded={loaded} onSelect={setDetail} />}
+      {view === "swap" && <SwapView tokens={TOKENS} loaded={loaded} onSelect={setDetail} />}
+      {view === "business" && <BusinessView />}
+
+      {/* Detail drawer */}
+      <DetailDrawer data={detail} onClose={() => setDetail(null)} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(ShieldApp));
+</script>
+</body>
+</html>

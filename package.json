@@ -1,0 +1,13 @@
+{
+  "name": "shield",
+  "version": "1.0.0",
+  "description": "Rug score everywhere + safe swap from any chain. Chrome extension + backend + Jupiter Agent Skill.",
+  "scripts": {
+    "backend": "cd backend && node server.js",
+    "scan": "node skills/shield-rug-check/scripts/scan.js",
+    "test:jupiter": "node jupiter/test.js",
+    "install:backend": "cd backend && npm install"
+  },
+  "keywords": ["solana", "rug-check", "chrome-extension", "lifi", "jupiter", "agent-skill", "x402"],
+  "license": "MIT"
+}

@@ -1,0 +1,258 @@
+/* ═══════════════════════════════════════════════
+   SHIELD — Injected Styles
+   Cyberpunk HUD aesthetic: dark, neon, sharp
+   ═══════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* ── Badge ── */
+.shield-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+  padding: 1px 6px 1px 4px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 18px !important;
+  cursor: pointer;
+  position: relative;
+  text-decoration: none !important;
+  vertical-align: middle;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  z-index: 99999;
+}
+
+.shield-badge:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 12px currentColor;
+}
+
+.shield-badge::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Score tiers */
+.shield-badge.shield-danger {
+  background: rgba(255, 30, 60, 0.15);
+  color: #ff1e3c;
+  border-color: rgba(255, 30, 60, 0.3);
+}
+.shield-badge.shield-danger::before {
+  background: #ff1e3c;
+  box-shadow: 0 0 6px #ff1e3c;
+}
+
+.shield-badge.shield-warning {
+  background: rgba(255, 170, 0, 0.15);
+  color: #ffaa00;
+  border-color: rgba(255, 170, 0, 0.3);
+}
+.shield-badge.shield-warning::before {
+  background: #ffaa00;
+  box-shadow: 0 0 6px #ffaa00;
+}
+
+.shield-badge.shield-caution {
+  background: rgba(255, 220, 50, 0.12);
+  color: #ddc832;
+  border-color: rgba(255, 220, 50, 0.25);
+}
+.shield-badge.shield-caution::before {
+  background: #ddc832;
+  box-shadow: 0 0 6px #ddc832;
+}
+
+.shield-badge.shield-safe {
+  background: rgba(0, 255, 136, 0.12);
+  color: #00ff88;
+  border-color: rgba(0, 255, 136, 0.25);
+}
+.shield-badge.shield-safe::before {
+  background: #00ff88;
+  box-shadow: 0 0 6px #00ff88;
+}
+
+.shield-badge.shield-loading {
+  background: rgba(120, 120, 140, 0.15);
+  color: #888;
+  border-color: rgba(120, 120, 140, 0.2);
+}
+.shield-badge.shield-loading::before {
+  background: #888;
+  animation: shield-pulse 1s ease infinite;
+}
+
+@keyframes shield-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* ── Tooltip ── */
+.shield-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  background: #0d0f14;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.1);
+  z-index: 999999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  transform: translateX(-50%) translateY(4px);
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+.shield-badge:hover .shield-tooltip {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.shield-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #0d0f14;
+}
+
+.shield-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.shield-tooltip-score {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+}
+
+.shield-tooltip-label {
+  font-size: 10px !important;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.shield-tooltip-verdict {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.shield-tooltip-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.shield-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px !important;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.shield-check-row .check-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shield-check-row .check-icon {
+  font-size: 10px;
+  width: 14px;
+  text-align: center;
+}
+
+.shield-check-row .check-result {
+  font-weight: 600;
+}
+
+.shield-check-row .check-result.pass { color: #00ff88; }
+.shield-check-row .check-result.fail { color: #ff1e3c; }
+.shield-check-row .check-result.warn { color: #ffaa00; }
+
+.shield-tooltip-footer {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px !important;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.shield-tooltip-footer .shield-logo-text {
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* ── Jupiter/Swap overlay ── */
+.shield-swap-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999999;
+  background: linear-gradient(180deg, rgba(255, 30, 60, 0.12) 0%, transparent 100%);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: #ff1e3c;
+  border-bottom: 1px solid rgba(255, 30, 60, 0.2);
+  backdrop-filter: blur(10px);
+  animation: shield-slideDown 0.3s ease;
+}
+
+@keyframes shield-slideDown {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+
+.shield-swap-overlay .shield-alert-icon {
+  font-size: 16px;
+}
+
+.shield-swap-overlay .shield-close-btn {
+  background: none;
+  border: 1px solid rgba(255, 30, 60, 0.3);
+  color: #ff1e3c;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  margin-left: 8px;
+}
+
+.shield-swap-overlay .shield-close-btn:hover {
+  background: rgba(255, 30, 60, 0.15);
+}
