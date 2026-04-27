@@ -166,15 +166,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── RESOLVE_TICKER — $TICKER → mint address via backend (Jupiter API) ──
   if (msg.type === 'RESOLVE_TICKER') {
-    const ticker = (msg.ticker || '').toUpperCase().replace(/^\$/, '');
-    if (!ticker || ticker.length < 1 || ticker.length > 20) {
-      sendResponse({ found: false });
-      return;
-    }
-    fetch(`${SHIELD_API}/api/resolve/${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(8000) })
-      .then(r => r.json())
-      .then(data => sendResponse(data))
-      .catch(e => { console.error('[SHIELD] Ticker resolve error:', e.message); sendResponse({ found: false }); });
+    (async () => {
+      try {
+        const ticker = (msg.ticker || '').toUpperCase().replace(/^\$/, '');
+        if (!ticker || ticker.length < 1 || ticker.length > 20) {
+          sendResponse({ found: false });
+          return;
+        }
+        const res = await fetch(`${SHIELD_API}/api/resolve/${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(8000) });
+        const data = await res.json();
+        sendResponse(data);
+      } catch (e) {
+        console.error('[SHIELD] Ticker resolve error:', e.message);
+        sendResponse({ found: false });
+      }
+    })();
     return true;
   }
 

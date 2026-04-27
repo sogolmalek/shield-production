@@ -193,7 +193,7 @@
         return;
       }
 
-      const tier    = r.score >= 70 ? 'safe' : r.score >= 50 ? 'caution' : r.score >= 30 ? 'warning' : 'danger';
+      const tier    = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
       const verdict = r.verdict || tier.toUpperCase();
 
       bar.innerHTML = `
@@ -201,7 +201,7 @@
         <span class="sb-score ${tier}">${r.score}</span>
         <span class="sb-verdict">${verdict}</span>
         <span style="font-size:10px;color:rgba(255,255,255,.3)">${mint.slice(0,6)}…${mint.slice(-4)}</span>
-        ${r.score >= 30
+        ${r.score >= 35
           ? `<button class="sb-buy" id="sb-buy-btn">⚡ Buy Safe via LI.FI</button>`
           : `<span style="font-size:11px;color:#ef4444;font-weight:600">🛑 Swap Blocked</span>`
         }
@@ -269,7 +269,7 @@
 
       scan(mint).then(r => {
         if (!r || r.blocked) { badge.remove(); badgedMints.delete(mint); return; }
-        const tier  = r.score >= 70 ? 'safe' : r.score >= 50 ? 'caution' : r.score >= 30 ? 'warning' : 'danger';
+        const tier  = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
         const color = COLORS[tier];
         badge.textContent      = `⛨ ${r.score}`;
         badge.style.color      = color;
@@ -509,12 +509,13 @@
     const mintsFromLinks = extractMintsFromLinks(article);
     const mints = new Set([...mintsFromText, ...mintsFromLinks]);
 
-    // Extract $TICKER cashtags and resolve to mint addresses
+    // Extract $TICKER cashtags and resolve to mint addresses (max 3 per tweet)
     const tickersFromText = extractTickersFromText(text);
     const tickersFromLinks = extractTickersFromLinks(article);
     const tickers = new Set([...tickersFromText, ...tickersFromLinks]);
+    const tickerArray = [...tickers].slice(0, 3); // limit to 3 tickers per tweet
 
-    if (mints.size === 0 && tickers.size === 0) return;
+    if (mints.size === 0 && tickerArray.length === 0) return;
     if (!articleMints.has(article)) articleMints.set(article, new Map());
     const mintMap = articleMints.get(article);
 
@@ -525,7 +526,7 @@
       injectBadge(article, mint, null);
       scan(mint).then(r => {
         if (!r || r.blocked) { mintMap.delete(mint); return; }
-        const tier    = r.score >= 70 ? 'safe' : r.score >= 50 ? 'caution' : r.score >= 30 ? 'warning' : 'danger';
+        const tier    = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
         const verdict = r.verdict || tier.toUpperCase();
         const sd = { score: r.score, tier, verdict };
         mintMap.set(mint, sd);
@@ -534,7 +535,7 @@
     });
 
     // Resolve tickers → mint addresses → scan
-    tickers.forEach(ticker => {
+    tickerArray.forEach(ticker => {
       // Skip if we already have this ticker resolving
       const tickerKey = `$${ticker}`;
       if (mintMap.has(tickerKey)) return;
@@ -549,7 +550,7 @@
         injectBadge(article, mint, null);
         return scan(mint).then(r => {
           if (!r || r.blocked) { mintMap.delete(mint); return; }
-          const tier    = r.score >= 70 ? 'safe' : r.score >= 50 ? 'caution' : r.score >= 30 ? 'warning' : 'danger';
+          const tier    = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
           const verdict = r.verdict || tier.toUpperCase();
           const sd = { score: r.score, tier, verdict };
           mintMap.set(mint, sd);
