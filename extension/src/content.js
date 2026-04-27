@@ -37,9 +37,39 @@
   const COLORS = { safe: '#34D399', caution: '#FBBF24', warning: '#F59E0B', danger: '#EF4444' };
   let barLocked = false; // Prevents scanText from racing with DexScreener resolve
 
+  // ── Hardened fingerprint — survives localStorage clear ──
   const fp = (() => {
-    try { const s = localStorage.getItem('shield_fp'); if (s) return s; const id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('shield_fp', id); return id; }
-    catch { return 'anon_' + Math.random().toString(36).slice(2); }
+    // Combine multiple signals for a fingerprint that's hard to reset
+    const signals = [];
+    // 1. Screen resolution + color depth (doesn't change)
+    signals.push(`${screen.width}x${screen.height}x${screen.colorDepth}`);
+    // 2. Timezone offset (doesn't change)
+    signals.push(`tz${new Date().getTimezoneOffset()}`);
+    // 3. Language
+    signals.push(navigator.language || 'en');
+    // 4. Platform
+    signals.push(navigator.platform || 'unknown');
+    // 5. Hardware concurrency (CPU cores)
+    signals.push(`c${navigator.hardwareConcurrency || 0}`);
+    // 6. Device memory
+    signals.push(`m${navigator.deviceMemory || 0}`);
+
+    // Hash the signals into a stable fingerprint
+    const raw = signals.join('|');
+    let hash = 0;
+    for (let i = 0; i < raw.length; i++) { hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0; }
+    const hardFP = 'sh_' + Math.abs(hash).toString(36);
+
+    // Also keep localStorage FP for backward compat
+    try {
+      const stored = localStorage.getItem('shield_fp');
+      if (stored) return stored + '_' + hardFP;
+      const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('shield_fp', id);
+      return id + '_' + hardFP;
+    } catch {
+      return hardFP + '_' + Math.random().toString(36).slice(2);
+    }
   })();
 
   function isProperMint(a) {
@@ -174,7 +204,14 @@
   // ═══════════════════════════════════════
   function removeBar() {
     const old = document.getElementById('shield-bar');
-    if (old) { old.remove(); document.body && (document.body.style.marginTop = ''); }
+    if (old) { old.remove(); }
+    if (document.body) document.body.style.marginTop = '';
+  }
+
+  function closeBarAnimated() {
+    const old = document.getElementById('shield-bar');
+    if (old) { old.classList.add('closing'); setTimeout(removeBar, 250); }
+    else removeBar();
   }
 
   function showBar(mint) {
@@ -254,7 +291,7 @@
     document.body.prepend(bar);
     document.body.style.marginTop = '48px';
     const b = document.createElement('button'); b.className = 'sb-close'; b.textContent = '\u2715';
-    b.addEventListener('click', removeBar); bar.appendChild(b);
+    b.addEventListener('click', closeBarAnimated); bar.appendChild(b);
   }
 
 
@@ -563,28 +600,75 @@
 
 
   // ═══════════════════════════════════════
-  // START
+  // START — bulletproof SPA navigation detection
   // ═══════════════════════════════════════
   function start() {
     console.log('[SHIELD] \u26E8 Active on', location.hostname);
     ensureStyles();
     startIntersectionObserver();
-    setTimeout(detectURL, 1500);
-    setTimeout(scanText, 3500);
+    setTimeout(detectURL, 1000);
+    setTimeout(scanText, 2500);
     startMutationObserver();
     startHeartbeat();
 
     let lastURL = location.href;
-    setInterval(() => {
-      if (location.href !== lastURL) {
-        lastURL = location.href;
+    let lastMint = null; // Track what we're currently scanning to avoid re-scanning same token
+    let navDebounce = null;
+
+    function onNavigate() {
+      const currentURL = location.href;
+      if (currentURL === lastURL) return;
+      lastURL = currentURL;
+
+      clearTimeout(navDebounce);
+      navDebounce = setTimeout(() => {
+        // Extract mint from new URL to check if it's actually a different token
+        const newMint = extractMintFromURL(currentURL);
+        if (newMint === lastMint && newMint !== null) return; // Same token, different URL params — skip
+        lastMint = newMint;
+
         barLocked = false;
         removeBar();
         badgedMints.clear();
-        setTimeout(detectURL, 800);
-        setTimeout(scanText, 2500);
-      }
-    }, 1500);
+        detectURL();
+        setTimeout(scanText, 1000);
+      }, 200);
+    }
+
+    // 1. Hook pushState/replaceState
+    const origPush = history.pushState;
+    const origReplace = history.replaceState;
+    history.pushState = function() { origPush.apply(this, arguments); onNavigate(); };
+    history.replaceState = function() { origReplace.apply(this, arguments); onNavigate(); };
+
+    // 2. popstate (back/forward)
+    window.addEventListener('popstate', onNavigate);
+
+    // 3. hashchange (for hash-based SPAs)
+    window.addEventListener('hashchange', onNavigate);
+
+    // 4. Polling fallback — every 1s for fast detection
+    setInterval(onNavigate, 1000);
+  }
+
+  // Helper: extract mint address from any URL (used to detect "same token different URL")
+  function extractMintFromURL(url) {
+    const patterns = [
+      /\/(?:solana|token\/solana)\/([a-zA-Z0-9]{32,44})/i,
+      /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/(?:pool|pair)\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /[?&](?:outputMint|inputMint|mint|address|token)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    ];
+    for (const p of patterns) {
+      const m = url.match(p);
+      if (m && m[1]) return m[1];
+    }
+    return null;
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

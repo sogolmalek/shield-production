@@ -352,15 +352,25 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
     if (user.lastReset !== today) { user.scansToday = 0; user.lastReset = today; }
     const daysSince = Math.floor((Date.now() - user.firstSeen) / 86400000);
     const totalFree = user.totalFreeScans || 0;
-    if (daysSince >= FREE_TRIAL_DAYS || user.scansToday >= FREE_SCANS_PER_DAY || totalFree >= FREE_TOTAL_MAX) {
+
+    // Also check IP-level limits (catches fingerprint reset via reinstall/clear)
+    const ipTrack = getIPTrack(clientIP);
+    const ipDaysSince = Math.floor((Date.now() - ipTrack.firstSeen) / 86400000);
+
+    // Trial expired: check BOTH fingerprint AND IP
+    const trialExpired = daysSince >= FREE_TRIAL_DAYS || ipDaysSince >= FREE_TRIAL_DAYS;
+    const dailyLimitHit = user.scansToday >= FREE_SCANS_PER_DAY;
+    const totalLimitHit = totalFree >= FREE_TOTAL_MAX || ipTrack.totalScans >= IP_MAX_FREE_SCANS;
+
+    if (trialExpired || dailyLimitHit || totalLimitHit) {
       let reason, msg;
-      if (daysSince >= FREE_TRIAL_DAYS) { reason = 'trial_expired'; msg = 'Free trial ended. $0.01/scan — top up $1, $5, or $10.'; }
-      else if (totalFree >= FREE_TOTAL_MAX) { reason = 'total_limit'; msg = `All ${FREE_TOTAL_MAX} free scans used. Top up to continue.`; }
+      if (trialExpired) { reason = 'trial_expired'; msg = 'Free trial ended. $0.01/scan — top up $1, $5, or $10.'; }
+      else if (totalLimitHit) { reason = 'total_limit'; msg = `Free scans used up. $0.01/scan — top up to continue.`; }
       else { reason = 'daily_limit'; msg = `Daily limit (${FREE_SCANS_PER_DAY}) reached. Come back tomorrow or top up.`; }
       return res.status(402).json({ error: reason, message: msg, payment: depositPayload() });
     }
     user.scansToday++; user.totalScans++; user.totalFreeScans = (user.totalFreeScans || 0) + 1;
-    getIPTrack(clientIP).totalScans++;
+    ipTrack.totalScans++;
     billingInfo = { freeScansLeft: FREE_SCANS_PER_DAY - user.scansToday, freeTotalLeft: FREE_TOTAL_MAX - user.totalFreeScans };
   }
 

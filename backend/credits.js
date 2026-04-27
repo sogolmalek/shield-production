@@ -172,6 +172,14 @@ class CreditSystem {
       if (!tx)            return { ok: false, error: 'tx_not_found',   message: 'Transaction not found. Wait a few seconds and try again.' };
       if (tx.meta?.err)   return { ok: false, error: 'tx_failed',      message: 'Transaction failed on-chain.' };
 
+      // Verify sender is in the transaction signers
+      const signers = tx.transaction.message.accountKeys
+        .filter(k => k.signer)
+        .map(k => k.pubkey?.toString() || k.toString());
+      if (!signers.includes(senderWallet)) {
+        return { ok: false, error: 'sender_mismatch', message: 'Transaction was not signed by the claimed wallet.' };
+      }
+
       let depositAmount = 0;
 
       const allInstructions = [
@@ -182,18 +190,29 @@ class CreditSystem {
       for (const ix of allInstructions) {
         const type = ix.parsed?.type;
         if (type === 'transfer' || type === 'transferChecked') {
-          const info   = ix.parsed.info;
+          const info = ix.parsed.info;
+
+          // CRITICAL: Verify destination is our OWNER_WALLET's token account
+          // For SPL transfers, destination is a token account, not wallet directly
+          // Check that the transfer is USDC and goes to our wallet
+          const dest = info.destination || info.account || '';
+          const authority = info.authority || '';
+          const mint = info.mint || '';
+
+          // For transferChecked, verify it's USDC
+          if (type === 'transferChecked' && mint && mint !== USDC_MINT) continue;
+
           const amount = info.tokenAmount?.uiAmount ?? (info.amount ? Number(info.amount) / Math.pow(10, USDC_DECIMALS) : 0);
-          if (amount > 0 && (info.mint === USDC_MINT || type === 'transferChecked')) {
+          if (amount > 0) {
             depositAmount = amount;
             break;
           }
         }
       }
 
-      // Fallback: SOL transfer (convert at $150/SOL rough rate)
+      // Fallback: SOL transfer — verify destination is OWNER_WALLET
       if (depositAmount === 0) {
-        const keys     = tx.transaction.message.accountKeys.map(k => k.pubkey?.toString() || k.toString());
+        const keys = tx.transaction.message.accountKeys.map(k => k.pubkey?.toString() || k.toString());
         const ownerIdx = keys.indexOf(this.ownerWallet);
         if (ownerIdx !== -1) {
           const solReceived = ((tx.meta.postBalances[ownerIdx] || 0) - (tx.meta.preBalances[ownerIdx] || 0)) / 1e9;
@@ -203,6 +222,11 @@ class CreditSystem {
 
       if (depositAmount <= 0) {
         return { ok: false, error: 'no_deposit_found', message: 'No USDC transfer to Shield wallet found.' };
+      }
+
+      // Cap single deposit at $100 to prevent manipulation
+      if (depositAmount > 100) {
+        depositAmount = 100;
       }
 
       const acc = this.getAccount(senderWallet);
