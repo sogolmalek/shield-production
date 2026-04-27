@@ -1,6 +1,6 @@
 {
   "name": "shield-backend",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "description": "Shield API — Rug scoring + x402 payments on Solana",
   "main": "server.js",
   "scripts": {

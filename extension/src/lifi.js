@@ -50,8 +50,8 @@
     [SOLANA_CHAIN_ID]: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
   };
 
-  // ── LI.FI API ──
-  async function getRoutes(fromChainId, fromToken, toToken, fromAmount) {
+  // ── LI.FI API — with retry ──
+  async function getRoutes(fromChainId, fromToken, toToken, fromAmount, attempt = 0) {
     const body = {
       fromChainId,
       toChainId: SOLANA_CHAIN_ID,
@@ -61,26 +61,34 @@
       options: {
         slippage:   0.03,
         order:      'RECOMMENDED',
-        fee:        LIFI_FEE,           // affiliate fee — taken from tx volume
-        integrator: LIFI_INTEGRATOR,    // registered integrator string
+        fee:        LIFI_FEE,
+        integrator: LIFI_INTEGRATOR,
       },
     };
 
-    const res = await fetch(`${LIFI_API}/advanced/routes`, {
-      method:  'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-lifi-integrator': LIFI_INTEGRATOR,   // also pass as header
-      },
-      body:    JSON.stringify(body),
-      signal:  AbortSignal.timeout(15000),
-    });
+    try {
+      const res = await fetch(`${LIFI_API}/advanced/routes`, {
+        method:  'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-lifi-integrator': LIFI_INTEGRATOR,
+        },
+        body:    JSON.stringify(body),
+        signal:  AbortSignal.timeout(15000),
+      });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || `Routes API returned ${res.status}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `Routes API returned ${res.status}`);
+      }
+      return res.json();
+    } catch (e) {
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        return getRoutes(fromChainId, fromToken, toToken, fromAmount, attempt + 1);
+      }
+      throw e;
     }
-    return res.json();
   }
 
   // ── Swap Modal ──
