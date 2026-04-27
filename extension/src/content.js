@@ -206,13 +206,24 @@
     const addrMatches = text.match(SOLANA_RE);
     if (addrMatches) addrMatches.forEach(m => { if (validMint(m)) scanAndBadge(article, mintMap, m); });
 
-    // 2. Cashtags from links: /search?q=%24TICKER
+    // 2. Cashtags — from links AND from text
     const tickers = [];
+
+    // 2a. From cashtag links: /search?q=%24TICKER
     article.querySelectorAll('a[href]').forEach(link => {
       const href = link.href || '';
       const m = href.match(/[?&]q=%24([A-Za-z]{2,10})/);
-      if (m) { const t = m[1].toUpperCase(); if (!SKIP_TICKERS.has(t) && tickers.length < 3) tickers.push(t); }
+      if (m) { const t = m[1].toUpperCase(); if (!SKIP_TICKERS.has(t) && tickers.length < 3 && !tickers.includes(t)) tickers.push(t); }
     });
+
+    // 2b. From plain text: $JASMY, $PEPE, $WIF etc
+    const textMatches = text.match(/\$([A-Za-z]{2,10})\b/g);
+    if (textMatches) {
+      textMatches.forEach(m => {
+        const t = m.slice(1).toUpperCase();
+        if (!SKIP_TICKERS.has(t) && tickers.length < 3 && !tickers.includes(t)) tickers.push(t);
+      });
+    }
 
     // 3. Resolve tickers
     tickers.forEach(ticker => {

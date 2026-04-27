@@ -139,7 +139,7 @@ function depositPayload(amount = 5) {
 }
 
 // ── Routes ──
-app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.3.0', worker: process.pid }));
+app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.2.0', worker: process.pid }));
 
 // ── SCAN ──
 app.post('/api/scan', scanLimiter, async (req, res) => {
