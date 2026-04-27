@@ -167,6 +167,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── RESOLVE_TICKER — $TICKER → mint address via backend (Jupiter API) ──
+  if (msg.type === 'RESOLVE_TICKER') {
+    const ticker = (msg.ticker || '').toUpperCase().replace(/^\$/, '');
+    if (!ticker || ticker.length < 1 || ticker.length > 20) {
+      sendResponse({ found: false });
+      return;
+    }
+    fetch(`${SHIELD_API}/api/resolve/${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(8000) })
+      .then(r => r.json())
+      .then(data => sendResponse(data))
+      .catch(e => { console.error('[SHIELD] Ticker resolve error:', e.message); sendResponse({ found: false }); });
+    return true;
+  }
+
   // ── TRIAL_ENDED notification ──
   if (msg.type === 'CHECK_TRIAL') {
     chrome.storage.local.get(['shieldInstallDate', 'trialEndedNotified'], (d) => {

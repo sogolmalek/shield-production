@@ -395,6 +395,60 @@
     return found;
   }
 
+  // Extract $TICKER cashtags from text (e.g. $WIF, $JASMY, $BONK)
+  const SKIP_TICKERS = new Set(['USD', 'USDC', 'USDT', 'SOL', 'ETH', 'BTC', 'BNB', 'MATIC', 'AVAX', 'DOT', 'ADA', 'XRP', 'DOGE', 'EUR', 'GBP', 'JPY', 'CNY']);
+  const tickerCache = new Map(); // ticker → { mint, timestamp }
+  const TICKER_CACHE_TTL = 10 * 60 * 1000;
+
+  function extractTickersFromText(text) {
+    const found = new Set();
+    // Match $TICKER patterns — 2-10 uppercase letters after $
+    const matches = text.match(/\$([A-Za-z]{2,10})\b/g);
+    if (matches) {
+      matches.forEach(m => {
+        const ticker = m.slice(1).toUpperCase();
+        if (!SKIP_TICKERS.has(ticker)) found.add(ticker);
+      });
+    }
+    return found;
+  }
+
+  // Also extract cashtags from Twitter's cashtag links
+  function extractTickersFromLinks(container) {
+    const found = new Set();
+    const links = container.querySelectorAll('a[href*="cashtag"], a[href*="search?q=%24"]');
+    links.forEach(link => {
+      const href = link.href || '';
+      const cashMatch = href.match(/[?&]q=%24([A-Za-z]{2,10})/);
+      if (cashMatch) {
+        const ticker = cashMatch[1].toUpperCase();
+        if (!SKIP_TICKERS.has(ticker)) found.add(ticker);
+      }
+      // Also check visible text like "$WIF"
+      const text = link.textContent?.trim();
+      if (text?.startsWith('$') && text.length <= 11) {
+        const ticker = text.slice(1).toUpperCase();
+        if (/^[A-Z]{2,10}$/.test(ticker) && !SKIP_TICKERS.has(ticker)) found.add(ticker);
+      }
+    });
+    return found;
+  }
+
+  // Resolve ticker → mint via background service worker
+  function resolveTicker(ticker) {
+    const cached = tickerCache.get(ticker);
+    if (cached && Date.now() - cached.timestamp < TICKER_CACHE_TTL) {
+      return Promise.resolve(cached.mint);
+    }
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'RESOLVE_TICKER', ticker }, (res) => {
+        if (chrome.runtime.lastError || !res || !res.found) { resolve(null); return; }
+        tickerCache.set(ticker, { mint: res.mint, timestamp: Date.now() });
+        resolve(res.mint);
+      });
+    });
+  }
+
   function injectBadge(article, mint, scoreData) {
     const tweetText = article.querySelector('[data-testid="tweetText"]') || article;
     if (tweetText.querySelector(`[data-shield-mint="${mint}"]`)) return;
@@ -421,9 +475,17 @@
     const mintsFromText = text.length >= 32 ? extractMintsFromText(text) : new Set();
     const mintsFromLinks = extractMintsFromLinks(article);
     const mints = new Set([...mintsFromText, ...mintsFromLinks]);
-    if (mints.size === 0) return;
+
+    // Extract $TICKER cashtags and resolve to mint addresses
+    const tickersFromText = extractTickersFromText(text);
+    const tickersFromLinks = extractTickersFromLinks(article);
+    const tickers = new Set([...tickersFromText, ...tickersFromLinks]);
+
+    if (mints.size === 0 && tickers.size === 0) return;
     if (!articleMints.has(article)) articleMints.set(article, new Map());
     const mintMap = articleMints.get(article);
+
+    // Process direct mint addresses
     mints.forEach(mint => {
       if (mintMap.has(mint)) return;
       mintMap.set(mint, null);
@@ -436,6 +498,31 @@
         mintMap.set(mint, sd);
         injectBadge(article, mint, sd);
       }).catch(() => mintMap.delete(mint));
+    });
+
+    // Resolve tickers → mint addresses → scan
+    tickers.forEach(ticker => {
+      // Skip if we already have this ticker resolving
+      const tickerKey = `$${ticker}`;
+      if (mintMap.has(tickerKey)) return;
+      mintMap.set(tickerKey, null);
+
+      resolveTicker(ticker).then(mint => {
+        if (!mint) { mintMap.delete(tickerKey); return; }
+        // Don't scan if we already have this mint from direct detection
+        if (mintMap.has(mint)) { mintMap.delete(tickerKey); return; }
+        mintMap.delete(tickerKey);
+        mintMap.set(mint, null);
+        injectBadge(article, mint, null);
+        return scan(mint).then(r => {
+          if (!r || r.blocked) { mintMap.delete(mint); return; }
+          const tier    = r.score >= 70 ? 'safe' : r.score >= 50 ? 'caution' : r.score >= 30 ? 'warning' : 'danger';
+          const verdict = r.verdict || tier.toUpperCase();
+          const sd = { score: r.score, tier, verdict };
+          mintMap.set(mint, sd);
+          injectBadge(article, mint, sd);
+        });
+      }).catch(() => mintMap.delete(tickerKey));
     });
   }
 

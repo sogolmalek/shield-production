@@ -139,7 +139,7 @@ function depositPayload(amount = 5) {
 }
 
 // ── Routes ──
-app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.3.0', worker: process.pid }));
+app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.2.0', worker: process.pid }));
 
 // ── SCAN ──
 app.post('/api/scan', scanLimiter, async (req, res) => {
@@ -204,6 +204,61 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
 
 // ── CREDITS ──
 app.get('/api/credits/:wallet', (req, res) => res.json(credits.getBalance(req.params.wallet)));
+
+// ── TICKER RESOLUTION — $TICKER → mint address via Jupiter ──
+const tickerCache = new Map();
+const TICKER_CACHE_TTL = 10 * 60 * 1000; // 10 min
+
+app.get('/api/resolve/:ticker', async (req, res) => {
+  const ticker = req.params.ticker.toUpperCase().replace(/^\$/, '');
+  if (!ticker || ticker.length < 1 || ticker.length > 20) {
+    return res.status(400).json({ error: 'invalid_ticker' });
+  }
+
+  // Check cache
+  const cached = tickerCache.get(ticker);
+  if (cached && Date.now() - cached.timestamp < TICKER_CACHE_TTL) {
+    return res.json(cached.data);
+  }
+
+  try {
+    const jupRes = await fetch(`https://api.jup.ag/tokens/v2/search?query=${encodeURIComponent(ticker)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!jupRes.ok) {
+      return res.status(502).json({ error: 'jupiter_api_error', status: jupRes.status });
+    }
+
+    const tokens = await jupRes.json();
+
+    if (!tokens || tokens.length === 0) {
+      return res.json({ found: false, ticker, mint: null });
+    }
+
+    // Find exact symbol match first, then fall back to first result
+    const exact = tokens.find(t => t.symbol?.toUpperCase() === ticker);
+    const best = exact || tokens[0];
+
+    const data = {
+      found: true,
+      ticker,
+      mint:      best.id,
+      name:      best.name,
+      symbol:    best.symbol,
+      verified:  best.isVerified || false,
+      tags:      best.tags || [],
+      decimals:  best.decimals,
+    };
+
+    tickerCache.set(ticker, { data, timestamp: Date.now() });
+    return res.json(data);
+
+  } catch (e) {
+    console.error('[TICKER RESOLVE]', ticker, e.message);
+    return res.status(500).json({ error: 'resolve_failed', message: e.message });
+  }
+});
 
 app.post('/api/payment/verify', paymentLimiter, async (req, res) => {
   const { txSignature, wallet } = req.body;
