@@ -1,26 +1,36 @@
 /**
- * SHIELD CREDITS — Prepaid scan system
+ * SHIELD CREDITS — Pricing System v3
+ *
+ * Pricing model:
+ *   FREE TRIAL:   3 days, 10 scans/day, 30 total max
+ *   PAY-AS-YOU-GO: $0.01 per scan
+ *   TOP-UP:        $1 (100 scans) / $5 (500 scans) / $10 (1000 scans)
+ *   SUBSCRIPTION:  $5/month (500 scans included, then $0.01 each)
+ *   AUTO-CHARGE:   When balance < $0.01, charge $1 if user opted in
  *
  * Flow:
- *   1. User connects Phantom → deposits USDC to Shield wallet
- *   2. Backend verifies tx on Solana → credits balance
- *   3. Each scan deducts $0.01 (off-chain, instant)
- *   4. Failed scans are refunded via refundScan()
- *   5. Low balance → "Top up" prompt in extension
+ *   1. User gets 3-day trial (10/day, 30 total)
+ *   2. Trial ends → connect Phantom → deposit USDC
+ *   3. Each scan deducts $0.01
+ *   4. Balance < $0.01 + auto-charge on → charge $1 via Phantom deeplink
+ *   5. Failed scans refunded
  */
 
 const { Connection, PublicKey } = require('@solana/web3.js');
 
-const USDC_MINT    = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDC_MINT     = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const USDC_DECIMALS = 6;
-const SCAN_COST    = 0.01;   // $0.01 per scan
+const SCAN_COST     = 0.01;   // $0.01 per scan
+const SUB_PRICE     = 5.00;   // $5/month subscription
+const SUB_SCANS     = 500;    // scans included in subscription
+const AUTO_CHARGE_AMOUNTS = [1, 5, 10]; // valid top-up amounts
 
 class CreditSystem {
   constructor(ownerWallet, rpcUrl) {
     this.ownerWallet  = ownerWallet;
     this.connection   = new Connection(rpcUrl, 'confirmed');
     this.balances     = new Map(); // wallet → account
-    this.verifiedTxs  = new Set(); // prevent double-credit
+    this.verifiedTxs  = new Set();
   }
 
   // ── Account ──
@@ -29,6 +39,10 @@ class CreditSystem {
       this.balances.set(wallet, {
         balance: 0, totalDeposited: 0, totalSpent: 0,
         scans: 0, lastScan: null, deposits: [], created: Date.now(),
+        // Subscription fields
+        subscription: null,       // { active, startDate, expiresAt, scansUsed, autoRenew }
+        autoCharge: false,        // opt-in auto top-up when balance runs out
+        autoChargeAmount: 1,      // how much to auto-charge ($1, $5, $10)
       });
     }
     return this.balances.get(wallet);
@@ -37,6 +51,8 @@ class CreditSystem {
   // ── Balance ──
   getBalance(wallet) {
     const acc = this.getAccount(wallet);
+    const sub = acc.subscription;
+    const subActive = sub && sub.active && sub.expiresAt > Date.now();
     return {
       wallet,
       balance:         acc.balance,
@@ -44,33 +60,97 @@ class CreditSystem {
       totalDeposited:  acc.totalDeposited,
       totalSpent:      acc.totalSpent,
       totalScans:      acc.scans,
-      lowBalance:      acc.balance < SCAN_COST * 10,  // < 10 scans left
+      lowBalance:      acc.balance < SCAN_COST * 10,
       empty:           acc.balance < SCAN_COST,
       scanCost:        SCAN_COST,
       depositAddress:  this.ownerWallet,
+      subscription:    subActive ? {
+        active: true,
+        expiresAt:   sub.expiresAt,
+        scansUsed:   sub.scansUsed,
+        scansLeft:   Math.max(0, SUB_SCANS - sub.scansUsed),
+        autoRenew:   sub.autoRenew,
+      } : null,
+      autoCharge:      acc.autoCharge,
+      autoChargeAmount: acc.autoChargeAmount,
     };
   }
 
   // ── Deduct for scan ──
   deductScan(wallet) {
     const acc = this.getAccount(wallet);
+    const sub = acc.subscription;
+
+    // Check subscription first — included scans are free
+    if (sub && sub.active && sub.expiresAt > Date.now() && sub.scansUsed < SUB_SCANS) {
+      sub.scansUsed++;
+      acc.scans++;
+      acc.lastScan = Date.now();
+      return {
+        ok: true, balance: acc.balance,
+        scansRemaining: Math.floor(acc.balance / SCAN_COST) + Math.max(0, SUB_SCANS - sub.scansUsed),
+        billingType: 'subscription',
+        subScansLeft: SUB_SCANS - sub.scansUsed,
+      };
+    }
+
+    // Pay-as-you-go from balance
     if (acc.balance < SCAN_COST) {
-      return { ok: false, error: 'insufficient_balance', balance: acc.balance, needed: SCAN_COST };
+      return {
+        ok: false, error: 'insufficient_balance', balance: acc.balance, needed: SCAN_COST,
+        autoCharge: acc.autoCharge, autoChargeAmount: acc.autoChargeAmount,
+      };
     }
     acc.balance     = Math.round((acc.balance    - SCAN_COST) * 100) / 100;
     acc.totalSpent  = Math.round((acc.totalSpent + SCAN_COST) * 100) / 100;
     acc.scans++;
     acc.lastScan = Date.now();
-    return { ok: true, balance: acc.balance, scansRemaining: Math.floor(acc.balance / SCAN_COST) };
+    return { ok: true, balance: acc.balance, scansRemaining: Math.floor(acc.balance / SCAN_COST), billingType: 'credits' };
   }
 
   // ── Refund a failed scan ──
   refundScan(wallet) {
     const acc = this.getAccount(wallet);
-    acc.balance     = Math.round((acc.balance    + SCAN_COST) * 100) / 100;
-    acc.totalSpent  = Math.round((acc.totalSpent - SCAN_COST) * 100) / 100;
+    // If last scan was subscription, decrement subScansUsed
+    const sub = acc.subscription;
+    if (sub && sub.active && sub.scansUsed > 0) {
+      sub.scansUsed--;
+    } else {
+      acc.balance     = Math.round((acc.balance    + SCAN_COST) * 100) / 100;
+      acc.totalSpent  = Math.round((acc.totalSpent - SCAN_COST) * 100) / 100;
+    }
     if (acc.scans > 0) acc.scans--;
     return { ok: true, balance: acc.balance };
+  }
+
+  // ── Activate subscription ──
+  activateSubscription(wallet) {
+    const acc = this.getAccount(wallet);
+    if (acc.balance < SUB_PRICE) {
+      return { ok: false, error: 'insufficient_balance', needed: SUB_PRICE, balance: acc.balance };
+    }
+    acc.balance     = Math.round((acc.balance    - SUB_PRICE) * 100) / 100;
+    acc.totalSpent  = Math.round((acc.totalSpent + SUB_PRICE) * 100) / 100;
+    acc.subscription = {
+      active:    true,
+      startDate: Date.now(),
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
+      scansUsed: 0,
+      autoRenew: false,
+    };
+    return {
+      ok: true, balance: acc.balance,
+      subscription: acc.subscription,
+      message: `Subscription active — ${SUB_SCANS} scans included for 30 days.`,
+    };
+  }
+
+  // ── Set auto-charge preference ──
+  setAutoCharge(wallet, enabled, amount = 1) {
+    const acc = this.getAccount(wallet);
+    acc.autoCharge = !!enabled;
+    acc.autoChargeAmount = AUTO_CHARGE_AMOUNTS.includes(amount) ? amount : 1;
+    return { ok: true, autoCharge: acc.autoCharge, autoChargeAmount: acc.autoChargeAmount };
   }
 
   // ── Verify USDC deposit on Solana ──
@@ -94,7 +174,6 @@ class CreditSystem {
 
       let depositAmount = 0;
 
-      // Scan top-level instructions
       const allInstructions = [
         ...(tx.transaction.message.instructions || []),
         ...(tx.meta?.innerInstructions?.flatMap(i => i.instructions) || []),
@@ -105,7 +184,6 @@ class CreditSystem {
         if (type === 'transfer' || type === 'transferChecked') {
           const info   = ix.parsed.info;
           const amount = info.tokenAmount?.uiAmount ?? (info.amount ? Number(info.amount) / Math.pow(10, USDC_DECIMALS) : 0);
-          // Only credit USDC (ignore other SPL tokens)
           if (amount > 0 && (info.mint === USDC_MINT || type === 'transferChecked')) {
             depositAmount = amount;
             break;
@@ -159,4 +237,4 @@ class CreditSystem {
   }
 }
 
-module.exports = { CreditSystem, SCAN_COST };
+module.exports = { CreditSystem, SCAN_COST, SUB_PRICE, SUB_SCANS, AUTO_CHARGE_AMOUNTS };

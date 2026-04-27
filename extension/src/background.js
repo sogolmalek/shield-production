@@ -8,6 +8,7 @@ const SHIELD_API         = 'https://shield-production-8awh.onrender.com';
 const COST_PER_SCAN      = 0.01;
 const FREE_SCANS_PER_DAY = 10;
 const FREE_TRIAL_DAYS    = 3;
+const FREE_TOTAL_MAX     = 30;  // total free scans across entire trial
 
 // ── Install ──
 chrome.runtime.onInstalled.addListener(() => {
@@ -24,9 +25,12 @@ chrome.runtime.onInstalled.addListener(() => {
     shieldHeliusKey:       '',
     shieldExcludedSites:   '',
     freeDailyUsed:         0,
+    freeTotalUsed:         0,
     freeLastReset:         new Date().toDateString(),
+    autoCharge:            false,
+    autoChargeAmount:      1,
   });
-  console.log('[SHIELD] Installed — 3-day free trial (10 scans/day).');
+  console.log('[SHIELD] Installed — 3-day free trial (10 scans/day, 30 total).');
 });
 
 // ── Message handler ──
@@ -115,18 +119,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'CAN_SCAN') {
     chrome.storage.local.get([
       'shieldInstallDate', 'shieldWalletConnected',
-      'freeDailyUsed', 'freeLastReset', 'shieldEnabled',
+      'freeDailyUsed', 'freeTotalUsed', 'freeLastReset', 'shieldEnabled',
     ], (d) => {
       if (!d.shieldEnabled) return sendResponse({ allowed: false, reason: 'disabled' });
       const daysSince   = Math.floor((Date.now() - (d.shieldInstallDate || Date.now())) / 86400000);
       const trialActive = daysSince < FREE_TRIAL_DAYS;
       const today       = new Date().toDateString();
       let dailyUsed     = d.freeDailyUsed || 0;
+      let totalUsed     = d.freeTotalUsed || 0;
       if (d.freeLastReset !== today) {
         dailyUsed = 0;
         chrome.storage.local.set({ freeDailyUsed: 0, freeLastReset: today });
       }
-      if (trialActive && dailyUsed < FREE_SCANS_PER_DAY) return sendResponse({ allowed: true, free: true, remaining: FREE_SCANS_PER_DAY - dailyUsed });
+      if (trialActive && dailyUsed < FREE_SCANS_PER_DAY && totalUsed < FREE_TOTAL_MAX) {
+        return sendResponse({ allowed: true, free: true, remaining: FREE_SCANS_PER_DAY - dailyUsed, totalRemaining: FREE_TOTAL_MAX - totalUsed });
+      }
       if (d.shieldWalletConnected) return sendResponse({ allowed: true, free: false });
       return sendResponse({ allowed: false, reason: 'limit_reached' });
     });

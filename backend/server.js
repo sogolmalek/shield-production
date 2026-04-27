@@ -28,7 +28,7 @@ const cors      = require('cors');
 const rateLimit = require('express-rate-limit');
 const { Connection, PublicKey } = require('@solana/web3.js');
 const { ShieldGoldRush } = require('./goldrush');
-const { CreditSystem, SCAN_COST } = require('./credits');
+const { CreditSystem, SCAN_COST, SUB_PRICE, SUB_SCANS, AUTO_CHARGE_AMOUNTS } = require('./credits');
 const fs = require('fs');
 
 const app = express();
@@ -48,6 +48,7 @@ if (!GOLDRUSH_KEY) console.warn('[WARN] GOLDRUSH_API_KEY not set — holder data
 
 const FREE_SCANS_PER_DAY = 10;  // must match extension/src/background.js
 const FREE_TRIAL_DAYS    = 3;
+const FREE_TOTAL_MAX     = 30; // hard cap across entire trial
 
 // ── Rate limiters ──
 const scanLimiter = rateLimit({
@@ -117,7 +118,7 @@ const CACHE_TTL = 5 * 60 * 1000;
 // ── Helpers ──
 function getOrCreateUser(fp) {
   if (!userState.has(fp)) {
-    userState.set(fp, { firstSeen: Date.now(), scansToday: 0, lastReset: new Date().toDateString(), totalScans: 0 });
+    userState.set(fp, { firstSeen: Date.now(), scansToday: 0, lastReset: new Date().toDateString(), totalScans: 0, totalFreeScans: 0 });
   }
   return userState.get(fp);
 }
@@ -129,7 +130,11 @@ function depositPayload(amount = 5) {
     currency: 'USDC',
     network: 'Solana',
     deeplink: `https://phantom.app/ul/transfer?recipient=${OWNER_WALLET}&amount=${amount}&splToken=${USDC_MINT}&label=Shield+Credits`,
-    pricing: { '$1': '100 scans', '$5': '500 scans', '$10': '1000 scans' },
+    pricing: {
+      payPerScan: '$0.01 per scan',
+      topUp: { '$1': '100 scans', '$5': '500 scans', '$10': '1000 scans' },
+      subscription: '$5/month — 500 scans included, then $0.01 each',
+    },
   };
 }
 
@@ -164,16 +169,27 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
     if (user.lastReset !== today) { user.scansToday = 0; user.lastReset = today; }
 
     const daysSince = Math.floor((Date.now() - user.firstSeen) / 86400000);
-    if (daysSince >= FREE_TRIAL_DAYS || user.scansToday >= FREE_SCANS_PER_DAY) {
-      const reason = daysSince >= FREE_TRIAL_DAYS ? 'trial_expired' : 'daily_limit';
-      const msg    = daysSince >= FREE_TRIAL_DAYS
-        ? 'Free trial ended. Deposit USDC to continue.'
-        : `Daily limit (${FREE_SCANS_PER_DAY} scans) reached.`;
+    const totalFree = user.totalFreeScans || 0;
+
+    // Trial over: expired OR daily limit OR total 30 scans used
+    if (daysSince >= FREE_TRIAL_DAYS || user.scansToday >= FREE_SCANS_PER_DAY || totalFree >= FREE_TOTAL_MAX) {
+      let reason, msg;
+      if (daysSince >= FREE_TRIAL_DAYS) {
+        reason = 'trial_expired';
+        msg = 'Free trial ended. $0.01/scan — top up $1, $5, or $10.';
+      } else if (totalFree >= FREE_TOTAL_MAX) {
+        reason = 'total_limit';
+        msg = `All ${FREE_TOTAL_MAX} free scans used. $0.01/scan — top up to continue.`;
+      } else {
+        reason = 'daily_limit';
+        msg = `Daily limit (${FREE_SCANS_PER_DAY} scans) reached. Come back tomorrow or top up now.`;
+      }
       return res.status(402).json({ error: reason, message: msg, payment: depositPayload() });
     }
     user.scansToday++;
     user.totalScans++;
-    billingInfo = { freeScansLeft: FREE_SCANS_PER_DAY - user.scansToday };
+    user.totalFreeScans = (user.totalFreeScans || 0) + 1;
+    billingInfo = { freeScansLeft: FREE_SCANS_PER_DAY - user.scansToday, freeTotalLeft: FREE_TOTAL_MAX - user.totalFreeScans };
   }
 
   try {
@@ -197,6 +213,40 @@ app.post('/api/payment/verify', paymentLimiter, async (req, res) => {
 
 app.post('/api/credits/deposit', paymentLimiter, async (req, res) => {
   res.json(await credits.verifyDeposit(req.body.txSignature, req.body.wallet));
+});
+
+// ── SUBSCRIPTION ──
+app.post('/api/subscription/activate', paymentLimiter, async (req, res) => {
+  const { wallet } = req.body;
+  if (!wallet) return res.status(400).json({ ok: false, error: 'wallet required' });
+  const result = credits.activateSubscription(wallet);
+  if (!result.ok) return res.status(402).json(result);
+  res.json(result);
+});
+
+app.get('/api/subscription/:wallet', (req, res) => {
+  const bal = credits.getBalance(req.params.wallet);
+  res.json({ subscription: bal.subscription, balance: bal.balance });
+});
+
+// ── AUTO-CHARGE SETTINGS ──
+app.post('/api/settings/auto-charge', (req, res) => {
+  const { wallet, enabled, amount } = req.body;
+  if (!wallet) return res.status(400).json({ ok: false, error: 'wallet required' });
+  res.json(credits.setAutoCharge(wallet, enabled, amount));
+});
+
+// ── PRICING INFO ──
+app.get('/api/pricing', (req, res) => {
+  res.json({
+    freeTrial: { days: FREE_TRIAL_DAYS, scansPerDay: FREE_SCANS_PER_DAY, totalMax: FREE_TOTAL_MAX },
+    payPerScan: SCAN_COST,
+    topUp: { 1: '100 scans', 5: '500 scans', 10: '1000 scans' },
+    subscription: { price: SUB_PRICE, scansIncluded: SUB_SCANS, period: '30 days', overageCost: SCAN_COST },
+    autoCharge: { amounts: AUTO_CHARGE_AMOUNTS, default: 1 },
+    currency: 'USDC', network: 'Solana',
+    depositAddress: OWNER_WALLET,
+  });
 });
 
 // ── SCORING ENGINE ──

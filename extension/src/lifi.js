@@ -11,6 +11,12 @@
 
   const LIFI_API = 'https://li.quest/v1';
 
+  // ── LI.FI Affiliate / Integrator Config ──
+  // Register at https://portal.li.fi/ to get your integrator string whitelisted
+  // Fee is taken from transaction volume — user sees it in the quote
+  const LIFI_INTEGRATOR = 'shield-rug-score';   // registered integrator string
+  const LIFI_FEE        = 0.005;                 // 0.5% fee on each swap (adjust after portal setup)
+
   // LI.FI chain IDs
   const SOLANA_CHAIN_ID = 1151111081099710;
   const CHAIN_NAMES = {
@@ -52,12 +58,20 @@
       fromTokenAddress: fromToken,
       toTokenAddress:   toToken,
       fromAmount,
-      options: { slippage: 0.03, order: 'RECOMMENDED' },
+      options: {
+        slippage:   0.03,
+        order:      'RECOMMENDED',
+        fee:        LIFI_FEE,           // affiliate fee — taken from tx volume
+        integrator: LIFI_INTEGRATOR,    // registered integrator string
+      },
     };
 
     const res = await fetch(`${LIFI_API}/advanced/routes`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-lifi-integrator': LIFI_INTEGRATOR,   // also pass as header
+      },
       body:    JSON.stringify(body),
       signal:  AbortSignal.timeout(15000),
     });
@@ -287,7 +301,7 @@
     const btn = document.getElementById('shieldLifiSwapBtn');
     if (!btn) return;
 
-    const jumperUrl = `https://jumper.exchange/?fromChain=${fromChainId}&toChain=${SOLANA_CHAIN_ID}&toToken=${toToken}`;
+    const jumperUrl = `https://jumper.exchange/?fromChain=${fromChainId}&toChain=${SOLANA_CHAIN_ID}&toToken=${toToken}&integrator=${LIFI_INTEGRATOR}&fee=${LIFI_FEE}`;
 
     // Try connecting wallet first, then open Jumper
     const tryConnect = async () => {

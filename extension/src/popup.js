@@ -100,7 +100,7 @@ function switchTab(page) {
 function updateStats() {
   chrome.storage.local.get([
     'scannedCount', 'rugsDodged', 'totalSpent', 'shieldInstallDate',
-    'freeDailyUsed', 'freeLastReset', 'shieldWalletConnected', 'shieldWalletAddr',
+    'freeDailyUsed', 'freeTotalUsed', 'freeLastReset', 'shieldWalletConnected', 'shieldWalletAddr',
     'shieldEnabled', 'shieldSwapWarnings', 'shieldThreshold', 'shieldHeliusKey', 'shieldExcludedSites',
   ], (d) => {
     if (el('tScans')) el('tScans').textContent = d.scannedCount || 0;
@@ -243,7 +243,7 @@ function showPaymentPrompt(errData, mintForRetry) {
   div.style.cssText = 'background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:10px;padding:14px;margin-bottom:12px;font-size:12px';
   div.innerHTML = `
     <div style="font-weight:600;color:#F59E0B;margin-bottom:6px">⚡ ${errData.message || 'Credits needed'}</div>
-    <div style="color:rgba(255,255,255,.55);margin-bottom:10px;line-height:1.5">$1 = 100 scans · $5 = 500 scans · $10 = 1000 scans</div>
+    <div style="color:rgba(255,255,255,.55);margin-bottom:10px;line-height:1.5">$0.01/scan · $1 = 100 scans · $5 = 500 scans · $10 = 1000 scans<br/>Or subscribe: $5/mo (500 scans included)</div>
     <div style="display:flex;gap:6px">
       <button id="pp-d1"  class="dep-btn" style="flex:1">$1</button>
       <button id="pp-d5"  class="dep-btn" style="flex:1">$5</button>

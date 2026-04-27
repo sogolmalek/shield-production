@@ -204,7 +204,7 @@
         if (typeof globalThis.ShieldLifi !== 'undefined') {
           globalThis.ShieldLifi.createSwapModal(mint, r.score, tier, verdict);
         } else {
-          window.open(`https://jumper.exchange/?toChain=1151111081099710&toToken=${mint}`, '_blank');
+          window.open(`https://jumper.exchange/?toChain=1151111081099710&toToken=${mint}&integrator=shield-rug-score&fee=0.005`, '_blank');
         }
       });
     });
@@ -230,6 +230,10 @@
       const matches = walker.currentNode.textContent.match(SOLANA_RE);
       if (matches) matches.forEach(m => { if (valid(m)) found.add(m); });
     }
+
+    // Also extract tokens from all link hrefs on the page (catches t.co shortened links on Twitter)
+    const linkMints = extractMintsFromLinks(document.body);
+    linkMints.forEach(m => found.add(m));
 
     found.forEach(mint => {
       if (badgedMints.has(mint)) return;
@@ -275,6 +279,8 @@
       /\/(?:en\/)?solana\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /[?&]inputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /[?&](?:from|to|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
@@ -320,6 +326,23 @@
 
   const articleMints = new Map(); // article_el → Map<mint, scoreData|null>
 
+  // URL patterns where token address appears in the path/query
+  const TOKEN_URL_PATTERNS = [
+    /dexscreener\.com\/solana\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /birdeye\.so\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /pump\.fun\/(?:coin\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /solscan\.io\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /solscan\.io\/account\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /explorer\.solana\.com\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /jup\.ag\/swap\/[^\/]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /jup\.ag\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /raydium\.io\/swap\/?\?.*(?:inputMint|outputMint)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /rugcheck\.xyz\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /defined\.fi\/sol\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /geckoterminal\.com\/solana\/pools\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    /meteora\.ag\/.*([1-9A-HJ-NP-Za-km-z]{32,44})/,
+  ];
+
   function extractMintsFromText(text) {
     const found = new Set();
     const raw = text.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g);
@@ -328,6 +351,46 @@
     if (ca) ca.forEach(m => {
       const addr = m.match(/([1-9A-HJ-NP-Za-km-z]{32,44})/)?.[1];
       if (addr && valid(addr)) found.add(addr);
+    });
+    return found;
+  }
+
+  // Extract token mints from <a> href attributes (handles t.co shortened links on Twitter)
+  function extractMintsFromLinks(container) {
+    const found = new Set();
+    const links = container.querySelectorAll('a[href]');
+    links.forEach(link => {
+      const href = link.href || '';
+      // Check expanded URL in title/aria-label (Twitter puts real URL there)
+      const expandedUrl = link.title || link.getAttribute('aria-label') || '';
+      const textContent = link.textContent || '';
+
+      // Try all sources: href itself, title attr (Twitter expanded URL), visible link text
+      for (const url of [href, expandedUrl, textContent]) {
+        if (!url) continue;
+        for (const pattern of TOKEN_URL_PATTERNS) {
+          const match = url.match(pattern);
+          if (match && match[1] && valid(match[1])) {
+            found.add(match[1]);
+          }
+        }
+        // Also try raw base58 match on visible link text (e.g. "dexscreener.com/solana/ABC...")
+        const rawInUrl = url.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g);
+        if (rawInUrl) rawInUrl.forEach(m => { if (valid(m)) found.add(m); });
+      }
+
+      // Twitter card links: data-testid="card.wrapper" often has the real URL
+      const card = link.closest('[data-testid="card.wrapper"]');
+      if (card) {
+        const cardLinks = card.querySelectorAll('a[href]');
+        cardLinks.forEach(cl => {
+          const ch = cl.href || '';
+          for (const pattern of TOKEN_URL_PATTERNS) {
+            const match = ch.match(pattern);
+            if (match && match[1] && valid(match[1])) found.add(match[1]);
+          }
+        });
+      }
     });
     return found;
   }
@@ -354,8 +417,10 @@
 
   function scanArticle(article) {
     const text = article.textContent || '';
-    if (text.length < 32) return;
-    const mints = extractMintsFromText(text);
+    // Extract from both text content AND link hrefs (critical for Twitter t.co links)
+    const mintsFromText = text.length >= 32 ? extractMintsFromText(text) : new Set();
+    const mintsFromLinks = extractMintsFromLinks(article);
+    const mints = new Set([...mintsFromText, ...mintsFromLinks]);
     if (mints.size === 0) return;
     if (!articleMints.has(article)) articleMints.set(article, new Map());
     const mintMap = articleMints.get(article);
