@@ -214,9 +214,35 @@
     else removeBar();
   }
 
+  const KNOWN_SAFE = {
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 'USDT',
+    'So11111111111111111111111111111111111111112': 'SOL',
+    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
+    'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 'mSOL',
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj': 'stSOL',
+    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'BONK',
+    'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL': 'JTO',
+  };
+
   function showBar(mint) {
     if (barLocked) return;
-    removeBar(); // Always replace — no "already exists" skip
+    if (SKIP.has(mint) || KNOWN_SAFE[mint]) {
+      // Known trusted token — show safe bar, don't waste a scan
+      removeBar();
+      ensureStyles();
+      const name = KNOWN_SAFE[mint] || 'Known Token';
+      const bar = document.createElement('div');
+      bar.id = 'shield-bar';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(52,211,153,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
+      bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score safe" style="animation:shieldCheckPop .3s ease">\u2713</span><span class="sb-verdict" style="color:#34D399">' + name + ' \u2014 Verified token, no scan needed</span>';
+      document.body.prepend(bar);
+      document.body.style.marginTop = '48px';
+      const b = document.createElement('button'); b.className = 'sb-close'; b.textContent = '\u2715';
+      b.addEventListener('click', closeBarAnimated); bar.appendChild(b);
+      return;
+    }
+    removeBar();
     ensureStyles();
 
     const bar = document.createElement('div');

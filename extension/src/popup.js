@@ -76,19 +76,34 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } else {
       // ── All other sites: Jupiter, Raydium, Pump.fun, Photon, BullX, GMGN, Birdeye, Solscan ──
+      const KNOWN_SKIP = new Set([
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+        'So11111111111111111111111111111111111111112',     // SOL
+        '11111111111111111111111111111111',
+        'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+        'ComputeBudget111111111111111111111111111111',
+        'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe8bv',
+        'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s',
+        'Vote111111111111111111111111111111111111111',
+        'Stake11111111111111111111111111111111111111',
+        '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // stSOL
+        'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
+        'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',   // JUP
+      ]);
       const allPatterns = [
-        /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,           // Jupiter /swap/SOL-XXX
-        /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                         // Jupiter /swap/XXX
-        /\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                   // GMGN
-        /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,           // Birdeye, Photon, generic
-        /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                      // Solscan
-        /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                         // Pump.fun
-        /\/(?:pool|pair)\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                // Raydium
-        /[?&](?:outputMint|inputMint|mint|address|token)=([1-9A-HJ-NP-Za-km-z]{32,44})/, // Query params
+        /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/(?:pool|pair)\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /[?&](?:outputMint|inputMint|mint|address|token)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
       ];
       for (const p of allPatterns) {
         const m = url.match(p);
-        if (m && m[1] && /[A-Z]/.test(m[1]) && /[a-z]/.test(m[1])) { mint = m[1]; break; }
+        if (m && m[1] && /[A-Z]/.test(m[1]) && /[a-z]/.test(m[1]) && !KNOWN_SKIP.has(m[1])) { mint = m[1]; break; }
       }
     }
 
@@ -242,10 +257,22 @@ async function doScan(addr) {
 }
 
 async function runScan() {
+  const KNOWN_TOKENS = {
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 'USDT',
+    'So11111111111111111111111111111111111111112': 'SOL (Wrapped)',
+    'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
+    'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 'mSOL',
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj': 'stSOL',
+  };
   const input = el('sIn');
   const addr = input?.value?.trim();
   if (!addr || addr.length < 32 || addr.length > 44) {
     if (input) { input.style.borderColor = 'rgba(239,68,68,.5)'; input.style.transition = 'border-color .3s'; setTimeout(() => input.style.borderColor = '', 1500); }
+    return;
+  }
+  if (KNOWN_TOKENS[addr]) {
+    showError(`This is ${KNOWN_TOKENS[addr]} — a known trusted token. No rug scan needed.`);
     return;
   }
   el('rAd') && (el('rAd').textContent = addr);
