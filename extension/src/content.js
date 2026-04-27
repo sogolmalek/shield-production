@@ -284,24 +284,28 @@
   function detectURL() {
     const href = location.href;
     const patterns = [
-      /\/(?:en\/)?solana\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /[?&]inputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/i,
-      /[?&](?:from|to|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /\/(?:en\/)?solana\/([a-zA-Z0-9]{32,44})/i,
+      /\/token\/(?:solana\/)?([a-zA-Z0-9]{32,44})/i,
+      /\/address\/([a-zA-Z0-9]{32,44})/i,
+      /\/coin\/([a-zA-Z0-9]{32,44})/i,
+      /\/tokens\/([a-zA-Z0-9]{32,44})/i,
+      /[?&]outputMint=([a-zA-Z0-9]{32,44})/i,
+      /[?&]inputMint=([a-zA-Z0-9]{32,44})/i,
+      /[?&](?:from|to|mint)=([a-zA-Z0-9]{32,44})/i,
     ];
     for (const p of patterns) {
       const m = href.match(p);
       if (m && m[1]) {
         let addr = m[1];
-        // URL might be lowercase — try to find correct-case address from page DOM
         if (addr === addr.toLowerCase()) {
+          // URL is lowercase — try DOM first
           const correctCase = findCorrectCaseAddress(addr);
-          if (correctCase) addr = correctCase;
-          else return; // can't find correct case, skip
+          if (correctCase) { addr = correctCase; }
+          else {
+            // DOM not ready yet or can't find — send lowercase to server, server will resolve
+            showBar(addr);
+            return;
+          }
         }
         if (valid(addr)) { showBar(addr); return; }
       }
@@ -310,35 +314,29 @@
 
   // Find correct-case Solana address from page DOM (DexScreener lowercases URLs)
   function findCorrectCaseAddress(lowercaseAddr) {
-    // Strategy 1: Look for copy buttons, data attributes, or elements with the address
-    const selectors = [
-      '[data-address]', '[data-mint]', '[data-token]',
-      'button[title]', 'a[title]', '[class*="address"]', '[class*="mint"]',
-      'input[value]', 'span', 'div', 'a',
-    ];
-    for (const sel of selectors) {
-      const els = document.querySelectorAll(sel);
-      for (const el of els) {
-        const candidates = [
-          el.getAttribute('data-address'),
-          el.getAttribute('data-mint'),
-          el.getAttribute('data-token'),
-          el.getAttribute('title'),
-          el.getAttribute('value'),
-          el.textContent?.trim(),
-        ];
-        for (const c of candidates) {
-          if (c && c.length >= 32 && c.length <= 44 && c.toLowerCase() === lowercaseAddr && valid(c)) {
-            return c;
-          }
+    // Strategy 1: Check all text on page for mixed-case version
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = walker.currentNode.textContent;
+      if (!text || text.length < 32) continue;
+      const matches = text.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g);
+      if (matches) {
+        for (const match of matches) {
+          if (match.toLowerCase() === lowercaseAddr && isProperCase(match)) return match;
         }
       }
     }
-    // Strategy 2: Check clipboard copy buttons (DexScreener has copy address)
-    const clipEls = document.querySelectorAll('[data-clipboard-text], [data-copy]');
-    for (const el of clipEls) {
-      const val = el.getAttribute('data-clipboard-text') || el.getAttribute('data-copy');
-      if (val && val.toLowerCase() === lowercaseAddr && valid(val)) return val;
+    // Strategy 2: Check data attributes and clipboard elements
+    const attrEls = document.querySelectorAll('[data-address], [data-mint], [data-token], [data-clipboard-text], [data-copy], [title], [value]');
+    for (const el of attrEls) {
+      const candidates = [
+        el.getAttribute('data-address'), el.getAttribute('data-mint'),
+        el.getAttribute('data-token'), el.getAttribute('data-clipboard-text'),
+        el.getAttribute('data-copy'), el.getAttribute('title'), el.getAttribute('value'),
+      ];
+      for (const c of candidates) {
+        if (c && c.length >= 32 && c.length <= 44 && c.toLowerCase() === lowercaseAddr && isProperCase(c)) return c;
+      }
     }
     return null;
   }

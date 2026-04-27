@@ -36,22 +36,23 @@ chrome.runtime.onInstalled.addListener(() => {
 // ── Message handler ──
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // ── DO_SCAN — content script asks background to fetch scan result ──
-  // This bypasses any page CSP — service worker fetches freely
+  // Wrap in async IIFE to properly handle sendResponse
   if (msg.type === 'DO_SCAN') {
-    chrome.storage.local.get([
-      'shieldWalletAddr', 'shieldWalletConnected', 'shieldEnabled',
-      'shieldInstallDate', 'freeDailyUsed', 'freeLastReset',
-    ], async (d) => {
-      if (!d.shieldEnabled) {
-        sendResponse({ error: 'disabled' });
-        return;
-      }
-
-      const wallet = d.shieldWalletConnected ? d.shieldWalletAddr : null;
-      const fp     = msg.fingerprint || 'bg_' + Date.now();
-
+    (async () => {
       try {
+        const d = await chrome.storage.local.get([
+          'shieldWalletAddr', 'shieldWalletConnected', 'shieldEnabled',
+          'shieldInstallDate', 'freeDailyUsed', 'freeLastReset',
+        ]);
+
+        if (!d.shieldEnabled) {
+          sendResponse({ error: 'disabled' });
+          return;
+        }
+
+        const wallet = d.shieldWalletConnected ? d.shieldWalletAddr : null;
+        const fp     = msg.fingerprint || 'bg_' + Date.now();
+
         const res = await fetch(`${SHIELD_API}/api/scan`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -71,17 +72,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         const data = await res.json();
 
-        // Update counters
-        chrome.storage.local.get(['scannedCount', 'totalSpent', 'freeDailyUsed', 'rugsDodged'], (s) => {
-          const updates = { scannedCount: (s.scannedCount || 0) + 1 };
-          if (data.billing?.type === 'credits') {
-            updates.totalSpent = Math.round(((s.totalSpent || 0) + COST_PER_SCAN) * 100) / 100;
-          } else {
-            updates.freeDailyUsed = (s.freeDailyUsed || 0) + 1;
-          }
-          if (data.score < 30) updates.rugsDodged = (s.rugsDodged || 0) + 1;
-          chrome.storage.local.set(updates);
-        });
+        // Update counters (fire and forget)
+        const s = await chrome.storage.local.get(['scannedCount', 'totalSpent', 'freeDailyUsed', 'rugsDodged']);
+        const updates = { scannedCount: (s.scannedCount || 0) + 1 };
+        if (data.billing?.type === 'credits') {
+          updates.totalSpent = Math.round(((s.totalSpent || 0) + COST_PER_SCAN) * 100) / 100;
+        } else {
+          updates.freeDailyUsed = (s.freeDailyUsed || 0) + 1;
+        }
+        if (data.score < 30) updates.rugsDodged = (s.rugsDodged || 0) + 1;
+        chrome.storage.local.set(updates);
 
         sendResponse({ ok: true, data });
 
@@ -89,11 +89,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         console.error('[SHIELD] Scan fetch error:', e.message);
         sendResponse({ error: e.message });
       }
-    });
-    return true; // async
+    })();
+    return true; // keep message channel open for async
   }
 
-  // ── GET_BALANCE — fetch credits balance via background ──
   if (msg.type === 'GET_BALANCE') {
     fetch(`${SHIELD_API}/api/credits/${msg.wallet}`)
       .then(r => r.json())
@@ -102,7 +101,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── VERIFY_PAYMENT ──
   if (msg.type === 'VERIFY_PAYMENT') {
     fetch(`${SHIELD_API}/api/payment/verify`, {
       method:  'POST',
@@ -115,12 +113,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── CAN_SCAN ──
   if (msg.type === 'CAN_SCAN') {
-    chrome.storage.local.get([
-      'shieldInstallDate', 'shieldWalletConnected',
-      'freeDailyUsed', 'freeTotalUsed', 'freeLastReset', 'shieldEnabled',
-    ], (d) => {
+    (async () => {
+      const d = await chrome.storage.local.get([
+        'shieldInstallDate', 'shieldWalletConnected',
+        'freeDailyUsed', 'freeTotalUsed', 'freeLastReset', 'shieldEnabled',
+      ]);
       if (!d.shieldEnabled) return sendResponse({ allowed: false, reason: 'disabled' });
       const daysSince   = Math.floor((Date.now() - (d.shieldInstallDate || Date.now())) / 86400000);
       const trialActive = daysSince < FREE_TRIAL_DAYS;
@@ -136,32 +134,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       if (d.shieldWalletConnected) return sendResponse({ allowed: true, free: false });
       return sendResponse({ allowed: false, reason: 'limit_reached' });
-    });
+    })();
     return true;
   }
 
-  // ── SCAN_DONE ──
   if (msg.type === 'SCAN_DONE') {
-    chrome.storage.local.get(['scannedCount', 'totalSpent', 'freeDailyUsed'], (d) => {
+    (async () => {
+      const d = await chrome.storage.local.get(['scannedCount', 'totalSpent', 'freeDailyUsed']);
       const updates = { scannedCount: (d.scannedCount || 0) + 1 };
       if (msg.free) updates.freeDailyUsed = (d.freeDailyUsed || 0) + 1;
       else updates.totalSpent = Math.round(((d.totalSpent || 0) + COST_PER_SCAN) * 100) / 100;
       chrome.storage.local.set(updates);
       sendResponse({ ok: true });
-    });
+    })();
     return true;
   }
 
-  // ── RUG_SAVED ──
   if (msg.type === 'RUG_SAVED') {
-    chrome.storage.local.get(['rugsDodged'], (d) => {
+    (async () => {
+      const d = await chrome.storage.local.get(['rugsDodged']);
       chrome.storage.local.set({ rugsDodged: (d.rugsDodged || 0) + 1 });
       sendResponse({ ok: true });
-    });
+    })();
     return true;
   }
 
-  // ── GET_STATS ──
   if (msg.type === 'GET_STATS') {
     chrome.storage.local.get(null, (data) => sendResponse(data));
     return true;
@@ -183,7 +180,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // ── TRIAL_ENDED notification ──
   if (msg.type === 'CHECK_TRIAL') {
-    chrome.storage.local.get(['shieldInstallDate', 'trialEndedNotified'], (d) => {
+    (async () => {
+      const d = await chrome.storage.local.get(['shieldInstallDate', 'trialEndedNotified']);
       const daysSince = Math.floor((Date.now() - (d.shieldInstallDate || Date.now())) / 86400000);
       if (daysSince >= FREE_TRIAL_DAYS && !d.trialEndedNotified) {
         chrome.storage.local.set({ trialEndedNotified: true });
@@ -195,7 +193,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
       }
       sendResponse({ ok: true });
-    });
+    })();
     return true;
   }
 });

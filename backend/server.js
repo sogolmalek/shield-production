@@ -147,15 +147,48 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
   if (!token) return res.status(400).json({ error: 'token_required' });
 
   // Fix lowercase addresses (DexScreener lowercases URLs)
-  if (token === token.toLowerCase() && token.length >= 32) {
+  // Base58 is case-sensitive so we can't decode lowercase. Instead:
+  // 1. Try RugCheck API (sometimes handles case-insensitive)
+  // 2. Try Jupiter search by checking if any token's id matches case-insensitively
+  // 3. Try Solana RPC getAccountInfo with original case (will fail for lowercase)
+  if (token !== token.toLowerCase() || token.length < 32) {
+    // Address has mixed case — proceed normally
+  } else {
+    // All lowercase — try to find correct case
+    let resolved = false;
     try {
-      const jupRes = await fetch(`https://api.jup.ag/tokens/v2/search?query=${token}`, { signal: AbortSignal.timeout(5000) });
-      if (jupRes.ok) {
-        const tokens = await jupRes.json();
-        const match = Array.isArray(tokens) && tokens.find(t => t.id && t.id.toLowerCase() === token);
-        if (match) token = match.id;
+      // Method 1: Search Jupiter by symbol or partial match
+      // Extract potential symbol from known patterns (e.g., ends with "pump")
+      const jupSearch = await fetch(`https://api.jup.ag/tokens/v2/search?query=${token.slice(0, 8)}`, { signal: AbortSignal.timeout(5000) });
+      if (jupSearch.ok) {
+        const tokens = await jupSearch.json();
+        if (Array.isArray(tokens)) {
+          const match = tokens.find(t => t.id && t.id.toLowerCase() === token.toLowerCase());
+          if (match) { token = match.id; resolved = true; }
+        }
       }
     } catch {}
+
+    if (!resolved) {
+      // Method 2: Try RugCheck with original lowercase (some APIs handle it)
+      try {
+        const rcTest = await fetch(`${RUGCHECK_API}/tokens/${token}/report/summary`, { signal: AbortSignal.timeout(5000) });
+        if (rcTest.ok) {
+          const rcData = await rcTest.json();
+          // RugCheck might return the correct-case address in response
+          if (rcData.mint && rcData.mint.toLowerCase() === token) { token = rcData.mint; resolved = true; }
+          else if (rcData.tokenMeta?.mint && rcData.tokenMeta.mint.toLowerCase() === token) { token = rcData.tokenMeta.mint; resolved = true; }
+        }
+      } catch {}
+    }
+
+    if (!resolved) {
+      return res.status(400).json({
+        error: 'invalid_address',
+        message: 'Could not resolve lowercase address. Please provide the correct-case Solana address.',
+        hint: 'DexScreener lowercases URLs. Copy the address from the token page instead.',
+      });
+    }
   }
 
   let billingType    = 'free_trial';
