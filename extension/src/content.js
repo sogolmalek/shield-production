@@ -30,7 +30,8 @@
   function validMint(a) {
     if (a.length < 32 || a.length > 44 || SKIP.has(a)) return false;
     if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(a)) return false;
-    // Don't require mixed case — lowercase addresses from DexScreener are valid pair/token IDs
+    // Reject all-uppercase (likely not a real address)
+    if (a === a.toUpperCase()) return false;
     return true;
   }
 
@@ -283,7 +284,20 @@
 
   function injectTweetBadge(article, mint, sd) {
     const tt = article.querySelector('[data-testid="tweetText"]') || article;
-    if (tt.querySelector('[data-shield-mint="' + mint + '"]')) return;
+    const existing = tt.querySelector('[data-shield-mint="' + mint + '"]');
+
+    if (existing && sd) {
+      // UPDATE existing badge with score (was showing "scanning...")
+      const c = COLORS[sd.tier];
+      existing.className = 'shield-badge';
+      existing.style.cssText = 'background:' + c + '20;color:' + c + ';display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle';
+      existing.textContent = '\u26E8 ' + sd.score; existing.title = 'Shield: ' + sd.score + '/100 \u2014 ' + sd.verdict;
+      existing.onclick = null;
+      existing.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); showBar(mint); });
+      return;
+    }
+    if (existing) return; // Already has a scanning badge, don't duplicate
+
     const b = document.createElement('span');
     b.setAttribute('data-shield-mint', mint);
     b.className = 'shield-badge' + (sd ? '' : ' scanning');
@@ -302,15 +316,12 @@
   function scanAndBadge(article, mintMap, mint) {
     if (mintMap.has(mint)) return;
     mintMap.set(mint, null);
-    injectTweetBadge(article, mint, null);
+    injectTweetBadge(article, mint, null); // Shows "scanning..." badge
     scan(mint).then(r => {
       if (!r || r.blocked) { mintMap.delete(mint); return; }
       const sd = { score: r.score, tier: tierOf(r), verdict: r.verdict || tierOf(r).toUpperCase() };
       mintMap.set(mint, sd);
-      // Remove scanning badge and inject final one
-      const old = article.querySelector('[data-shield-mint="' + mint + '"]');
-      if (old) { old.classList.remove('scanning'); }
-      injectTweetBadge(article, mint, sd);
+      injectTweetBadge(article, mint, sd); // Updates badge with score
     }).catch(() => mintMap.delete(mint));
   }
 
