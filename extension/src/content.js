@@ -127,8 +127,8 @@
     return new Promise(resolve => {
       try {
         chrome.runtime.sendMessage({ type: 'RESOLVE_DEXSCREENER', pairAddress }, res => {
-          if (chrome.runtime.lastError || !res?.tokenAddress) resolve(null);
-          else resolve(res.tokenAddress);
+          if (chrome.runtime.lastError || !res) resolve(null);
+          else resolve(res); // Returns { tokenAddress, symbol, name } or { tokenAddress: null, isStablePair: true, ... }
         });
       } catch { resolve(null); }
     });
@@ -208,8 +208,22 @@
 
 
   // ═══════════════════════════════════════
-  // URL DETECTION
+  // STABLE PAIR BAR — SOL/USDC, USDT/USDC, etc.
   // ═══════════════════════════════════════
+  function showStablePairBar(base, quote) {
+    if (document.getElementById('shield-bar')) return;
+    ensureStyles();
+    const bar = document.createElement('div');
+    bar.id = 'shield-bar';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(52,211,153,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
+    bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score safe" style="animation:shieldCheckPop .3s ease">\u2713</span><span class="sb-verdict" style="color:#34D399">' + (base || '?') + '/' + (quote || '?') + ' — Known pair, no rug risk</span>';
+    const origMargin = document.body?.style?.marginTop || '';
+    document.body.prepend(bar);
+    if (document.body) document.body.style.marginTop = '48px';
+    const b = document.createElement('button'); b.className = 'sb-close'; b.textContent = '\u2715';
+    b.addEventListener('click', () => { bar.classList.add('closing'); setTimeout(() => { bar.remove(); if (document.body) document.body.style.marginTop = origMargin; }, 250); });
+    bar.appendChild(b);
+  }
   function detectURL() {
     const href = location.href;
     const host = location.hostname;
@@ -218,13 +232,16 @@
       const m = href.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
       if (m && m[1]) {
         const addr = m[1];
-        // Always try DexScreener pair API first — handles lowercase, stablecoin pairs, everything
-        resolveDexPair(addr).then(tokenAddr => {
-          if (tokenAddr) showBar(tokenAddr);
-          // If pair resolve fails AND address has proper Base58 case, try direct scan
-          else if (/[A-Z]/.test(addr) && /[a-z]/.test(addr)) showBar(addr);
-          // If all lowercase, try via backend resolve (Jupiter search)
-          else if (addr === addr.toLowerCase()) {
+        resolveDexPair(addr).then(res => {
+          if (!res) return;
+          if (res.tokenAddress) {
+            showBar(res.tokenAddress);
+          } else if (res.isStablePair) {
+            // SOL/USDC or USDT/USDC pair — show safe bar, no scan needed
+            showStablePairBar(res.base, res.quote);
+          } else if (/[A-Z]/.test(addr) && /[a-z]/.test(addr)) {
+            showBar(addr);
+          } else if (addr === addr.toLowerCase()) {
             scan(addr).then(r => {
               if (r && !r.blocked && r.score >= 0 && r.address) showBar(r.address);
             });

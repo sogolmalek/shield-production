@@ -288,8 +288,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } else if (quote?.address && !STABLES.has(quote.address)) {
           tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
         } else {
-          // Both are stablecoins/known tokens — skip
-          tokenAddr = null;
+          // Both are stablecoins/SOL — this is a stable pair like SOL/USDC
+          sendResponse({ tokenAddress: null, isStablePair: true, base: base?.symbol, quote: quote?.symbol });
+          return;
         }
 
         sendResponse(tokenAddr
