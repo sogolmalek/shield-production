@@ -1,3 +1,17 @@
+/**
+ * SHIELD Content Script v4.0
+ * 
+ * Architecture: ONE resolve function handles everything.
+ * resolveToken(input) → { mint, source } or null
+ * 
+ * Input types:
+ *   - proper-case Solana address → scan directly
+ *   - lowercase address (DexScreener URL) → DexScreener pair API → token-pairs API → backend
+ *   - $TICKER cashtag → Jupiter resolve → scan
+ *   - pair address → DexScreener API → extract non-stablecoin token
+ * 
+ * No race conditions: DexScreener pages lock the bar until resolve completes.
+ */
 (() => {
   'use strict';
 
@@ -21,17 +35,17 @@
 
   const cache = {};
   const COLORS = { safe: '#34D399', caution: '#FBBF24', warning: '#F59E0B', danger: '#EF4444' };
+  let barLocked = false; // Prevents scanText from racing with DexScreener resolve
 
   const fp = (() => {
     try { const s = localStorage.getItem('shield_fp'); if (s) return s; const id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('shield_fp', id); return id; }
     catch { return 'anon_' + Math.random().toString(36).slice(2); }
   })();
 
-  function validMint(a) {
+  function isProperMint(a) {
     if (a.length < 32 || a.length > 44 || SKIP.has(a)) return false;
     if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(a)) return false;
-    if (a === a.toUpperCase()) return false;
-    return true;
+    return /[A-Z]/.test(a) && /[a-z]/.test(a); // Must be mixed case
   }
 
   function isContextValid() {
@@ -45,11 +59,27 @@
 
 
   // ═══════════════════════════════════════
-  // SCAN QUEUE — max 4 concurrent, prevents API flood on Twitter feed
+  // MESSAGING — all comms to background.js
+  // ═══════════════════════════════════════
+  function sendMsg(msg) {
+    if (!isContextValid()) return Promise.resolve(null);
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage(msg, res => {
+          if (chrome.runtime.lastError) { resolve(null); return; }
+          resolve(res);
+        });
+      } catch { resolve(null); }
+    });
+  }
+
+
+  // ═══════════════════════════════════════
+  // SCAN QUEUE — max 4 concurrent
   // ═══════════════════════════════════════
   const scanQueue = [];
-  let activeScanCount = 0;
-  const MAX_CONCURRENT_SCANS = 4;
+  let activeScans = 0;
+  const MAX_CONCURRENT = 4;
 
   function enqueueScan(mint) {
     if (cache[mint]) return Promise.resolve(cache[mint]);
@@ -60,71 +90,42 @@
   }
 
   function drainQueue() {
-    while (activeScanCount < MAX_CONCURRENT_SCANS && scanQueue.length > 0) {
+    while (activeScans < MAX_CONCURRENT && scanQueue.length > 0) {
       const { mint, resolve } = scanQueue.shift();
       if (cache[mint]) { resolve(cache[mint]); continue; }
-      activeScanCount++;
-      scanDirect(mint).then(r => {
-        activeScanCount--;
-        resolve(r);
-        drainQueue();
-      });
+      activeScans++;
+      doScan(mint).then(r => { activeScans--; resolve(r); drainQueue(); });
     }
   }
 
-  function scanDirect(mint, retryCount = 0) {
-    if (!isContextValid()) return Promise.resolve(null);
+  function doScan(mint, retry = 0) {
     return new Promise(resolve => {
-      const startTime = Date.now();
-      try {
-        chrome.runtime.sendMessage({ type: 'DO_SCAN', token: mint, fingerprint: fp }, res => {
-          if (chrome.runtime.lastError) {
-            if (retryCount < 1) { setTimeout(() => scanDirect(mint, retryCount + 1).then(resolve), 2000); }
-            else resolve(null);
-            return;
-          }
-          if (!res) { resolve(null); return; }
-          if (res.blocked) { resolve({ score: -1, blocked: true, reason: res.reason, message: res.message, payment: res.payment }); return; }
-          if (res.error === 'server_down' && retryCount < 2) {
-            setTimeout(() => scanDirect(mint, retryCount + 1).then(resolve), (res.retryAfter || 10) * 1000);
-            return;
-          }
-          if (res.error) { resolve(null); return; }
-          if (res.data) {
-            res.data._scanTime = Date.now() - startTime;
-            cache[mint] = res.data;
-            resolve(res.data);
-          } else resolve(null);
-        });
-      } catch { resolve(null); }
+      sendMsg({ type: 'DO_SCAN', token: mint, fingerprint: fp }).then(res => {
+        if (!res) { if (retry < 1) { setTimeout(() => doScan(mint, retry + 1).then(resolve), 2000); } else resolve(null); return; }
+        if (res.blocked) { resolve({ score: -1, blocked: true, reason: res.reason, message: res.message, payment: res.payment }); return; }
+        if (res.error === 'server_down' && retry < 2) { setTimeout(() => doScan(mint, retry + 1).then(resolve), (res.retryAfter || 10) * 1000); return; }
+        if (res.error) { resolve(null); return; }
+        if (res.data) { cache[mint] = res.data; resolve(res.data); }
+        else resolve(null);
+      });
     });
   }
 
-  // Public scan function uses queue
   function scan(mint) { return enqueueScan(mint); }
 
-  function resolveTicker(ticker) {
-    if (!isContextValid()) return Promise.resolve(null);
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: 'RESOLVE_TICKER', ticker }, res => {
-          if (chrome.runtime.lastError || !res?.found || !res?.mint) resolve(null);
-          else resolve(res.mint);
-        });
-      } catch { resolve(null); }
-    });
+
+  // ═══════════════════════════════════════
+  // RESOLVE — single entry point for ALL address types
+  // ═══════════════════════════════════════
+
+  // Resolve DexScreener pair/token address → proper mint address
+  function resolveDex(addr) {
+    return sendMsg({ type: 'RESOLVE_DEXSCREENER', pairAddress: addr });
   }
 
-  function resolveDexPair(pairAddress) {
-    if (!isContextValid()) return Promise.resolve(null);
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: 'RESOLVE_DEXSCREENER', pairAddress }, res => {
-          if (chrome.runtime.lastError || !res) resolve(null);
-          else resolve(res);
-        });
-      } catch { resolve(null); }
-    });
+  // Resolve $TICKER → mint + scan data in one call
+  function resolveAndScan(ticker) {
+    return sendMsg({ type: 'RESOLVE_AND_SCAN', ticker, fingerprint: fp });
   }
 
 
@@ -169,143 +170,222 @@
 
 
   // ═══════════════════════════════════════
-  // FLOATING BAR — cold start awareness + data confidence
+  // FLOATING BAR
   // ═══════════════════════════════════════
+  function removeBar() {
+    const old = document.getElementById('shield-bar');
+    if (old) { old.remove(); document.body && (document.body.style.marginTop = ''); }
+  }
+
   function showBar(mint) {
-    if (document.getElementById('shield-bar')) return;
+    if (barLocked) return;
+    removeBar(); // Always replace — no "already exists" skip
     ensureStyles();
+
     const bar = document.createElement('div');
     bar.id = 'shield-bar';
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(139,92,246,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
     bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score loading"><span class="sb-spinner"></span>Scanning</span><span class="sb-verdict" style="opacity:.5">Analyzing on-chain data\u2026</span>';
 
-    const origMargin = document.body?.style?.marginTop || '';
     document.body.prepend(bar);
-    if (document.body) document.body.style.marginTop = '48px';
+    document.body.style.marginTop = '48px';
 
-    const closeBar = () => {
-      bar.classList.add('closing');
-      setTimeout(() => { bar.remove(); if (document.body) document.body.style.marginTop = origMargin; }, 250);
-    };
-    const addClose = () => {
-      const b = document.createElement('button'); b.className = 'sb-close'; b.textContent = '\u2715';
-      b.addEventListener('click', closeBar); bar.appendChild(b);
-    };
+    const closeBar = () => { bar.classList.add('closing'); setTimeout(removeBar, 250); };
+    const addClose = () => { const b = document.createElement('button'); b.className = 'sb-close'; b.textContent = '\u2715'; b.addEventListener('click', closeBar); bar.appendChild(b); };
 
-    const startTime = Date.now();
-
-    // Cold start detector — if >5s, show "waking up" message
-    const coldStartTimer = setTimeout(() => {
-      const verdictEl = bar.querySelector('.sb-verdict');
-      if (verdictEl) verdictEl.textContent = 'Server waking up (free tier)\u2026 hang tight';
+    // Cold start detector
+    const coldTimer = setTimeout(() => {
+      const v = bar.querySelector('.sb-verdict');
+      if (v && v.textContent.includes('Analyzing')) v.textContent = 'Server waking up\u2026 hang tight';
     }, 5000);
 
     scan(mint).then(r => {
-      clearTimeout(coldStartTimer);
-      const elapsed = Date.now() - startTime;
-      const delay = Math.max(0, 400 - elapsed);
-
+      clearTimeout(coldTimer);
       setTimeout(() => {
+        if (!document.getElementById('shield-bar')) return; // Bar was closed
+
         if (!r) {
           bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score danger">Error</span><span class="sb-verdict">Could not reach API</span><button class="sb-retry" id="sb-retry-btn">Retry</button>';
           addClose();
-          document.getElementById('sb-retry-btn')?.addEventListener('click', () => { closeBar(); setTimeout(() => showBar(mint), 300); });
+          document.getElementById('sb-retry-btn')?.addEventListener('click', () => { removeBar(); showBar(mint); });
           return;
         }
         if (r.blocked) {
-          const pi = r.payment || {};
-          const dl = pi.deeplink || `https://phantom.app/ul/transfer?recipient=${OWNER_WALLET}&amount=1&splToken=${USDC_MINT}&label=Shield+Credits`;
+          const dl = r.payment?.deeplink || `https://phantom.app/ul/transfer?recipient=${OWNER_WALLET}&amount=1&splToken=${USDC_MINT}&label=Shield+Credits`;
           bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score warning">\u26A1</span><span class="sb-verdict" style="flex:1;font-size:12px">' + (r.message || 'Free trial ended') + '</span><button class="sb-pay" id="sb-topup-1">$1</button><button class="sb-pay" id="sb-topup-5">$5</button><button class="sb-pay" id="sb-topup-10">$10</button>';
           addClose();
-          [1, 5, 10].forEach(amt => {
-            document.getElementById('sb-topup-' + amt)?.addEventListener('click', () => {
-              window.open(dl.replace(/amount=\d+/, 'amount=' + amt), '_blank');
-            });
-          });
+          [1, 5, 10].forEach(amt => { document.getElementById('sb-topup-' + amt)?.addEventListener('click', () => { window.open(dl.replace(/amount=\d+/, 'amount=' + amt), '_blank'); }); });
           return;
         }
+
         const tier = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
         const verdict = r.verdict || tier.toUpperCase();
         const conf = r.dataConfidence || (r.sourcesUsed >= 3 ? 'high' : r.sourcesUsed === 2 ? 'medium' : 'low');
-        const confLabel = conf === 'high' ? '4/4 sources' : conf === 'medium' ? '2-3 sources' : '1 source';
-        bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score ' + tier + '" style="animation:shieldCheckPop .3s ease">' + r.score + '</span><span class="sb-verdict">' + verdict + '</span><span class="sb-conf ' + conf + '">' + confLabel + '</span><span style="font-size:10px;color:rgba(255,255,255,.3)">' + mint.slice(0, 6) + '\u2026' + mint.slice(-4) + '</span>' + (r.score >= 35 ? '<button class="sb-buy" id="sb-buy-btn">\u26A1 Buy Safe via LI.FI</button>' : '<span style="font-size:11px;color:#ef4444;font-weight:600;animation:shieldFadeIn .3s ease">\uD83D\uDED1 Swap Blocked</span>');
+        const confLabel = conf === 'high' ? '4/4' : conf === 'medium' ? '2-3' : '1';
+        const nameLabel = r.name ? `<span style="font-size:11px;color:rgba(255,255,255,.6);font-weight:600">${r.symbol || r.name}</span>` : '';
+
+        bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span>'
+          + '<span class="sb-score ' + tier + '" style="animation:shieldCheckPop .3s ease">' + r.score + '</span>'
+          + '<span class="sb-verdict">' + verdict + '</span>'
+          + nameLabel
+          + '<span class="sb-conf ' + conf + '">' + confLabel + ' src</span>'
+          + '<span style="font-size:10px;color:rgba(255,255,255,.2)">' + mint.slice(0, 4) + '\u2026' + mint.slice(-4) + '</span>'
+          + (r.score >= 35
+            ? '<button class="sb-buy" id="sb-buy-btn">\u26A1 Buy via LI.FI</button>'
+            : '<span style="font-size:11px;color:#ef4444;font-weight:600;animation:shieldFadeIn .3s ease">\uD83D\uDED1 Blocked</span>');
         addClose();
         document.getElementById('sb-buy-btn')?.addEventListener('click', () => {
           if (typeof globalThis.ShieldLifi !== 'undefined') globalThis.ShieldLifi.createSwapModal(mint, r.score, tier, verdict);
           else window.open('https://jumper.exchange/?toChain=1151111081099710&toToken=' + mint + '&integrator=shield-rug-score&fee=0.005', '_blank');
         });
-      }, delay);
+      }, 400); // Min display time
     });
 
-    if (isContextValid()) { try { chrome.runtime.sendMessage({ type: 'CHECK_TRIAL' }); } catch {} }
+    sendMsg({ type: 'CHECK_TRIAL' });
   }
 
-  // ── Stablecoin pair bar ──
   function showStablePairBar(base, quote) {
-    if (document.getElementById('shield-bar')) return;
+    removeBar();
     ensureStyles();
     const bar = document.createElement('div');
     bar.id = 'shield-bar';
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(52,211,153,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
     bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score safe" style="animation:shieldCheckPop .3s ease">\u2713</span><span class="sb-verdict" style="color:#34D399">' + (base || '?') + '/' + (quote || '?') + ' \u2014 Known pair, no rug risk</span>';
-    const origMargin = document.body?.style?.marginTop || '';
     document.body.prepend(bar);
-    if (document.body) document.body.style.marginTop = '48px';
+    document.body.style.marginTop = '48px';
     const b = document.createElement('button'); b.className = 'sb-close'; b.textContent = '\u2715';
-    b.addEventListener('click', () => { bar.classList.add('closing'); setTimeout(() => { bar.remove(); if (document.body) document.body.style.marginTop = origMargin; }, 250); });
-    bar.appendChild(b);
+    b.addEventListener('click', removeBar); bar.appendChild(b);
   }
 
 
   // ═══════════════════════════════════════
-  // URL DETECTION
+  // DETECT URL — runs once per page load / URL change
+  // Covers: DexScreener, Jupiter, Raydium, Pump.fun, Photon, BullX, GMGN, Birdeye, Solscan, etc.
   // ═══════════════════════════════════════
   function detectURL() {
     const href = location.href;
     const host = location.hostname;
 
+    // ── DexScreener (all URL formats) ──
+    // /solana/xxx, /token/solana/xxx — always lowercase pair or token address
     if (host.includes('dexscreener.com')) {
-      const m = href.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
-      if (m && m[1]) {
-        const addr = m[1];
-        // Background tries: pairs API → token-pairs API → stablecoin detection
-        resolveDexPair(addr).then(res => {
-          if (res && res.tokenAddress) {
-            showBar(res.tokenAddress);
-          } else if (res && res.isStablePair) {
-            showStablePairBar(res.base, res.quote);
-          } else {
-            // Both DexScreener APIs failed — send to backend (4-method resolve)
-            scan(addr).then(r => {
-              if (r && !r.blocked && r.score > 0) showBar(r.address || addr);
-              else if (r && r.blocked) showBar(addr);
-            });
-          }
-        });
+      const m = href.match(/\/(?:solana|token\/solana)\/([a-zA-Z0-9]{32,44})/i);
+      if (!m) return;
+      const addr = m[1];
+      barLocked = true;
+
+      resolveDex(addr).then(res => {
+        barLocked = false;
+        if (res?.tokenAddress) showBar(res.tokenAddress);
+        else if (res?.isStablePair) showStablePairBar(res.base, res.quote);
+        else {
+          scan(addr).then(r => {
+            if (r && !r.blocked && r.score > 0) showBar(r.address || addr);
+            else if (r?.blocked) showBar(addr);
+          });
+        }
+      }).catch(() => { barLocked = false; });
+      return;
+    }
+
+    // ── Jupiter (all URL formats) ──
+    // jup.ag/swap/SOL-XXX, jup.ag/swap?outputMint=XXX, jup.ag/?outputMint=XXX
+    if (host.includes('jup.ag') || host.includes('jupiter.ag')) {
+      const jupPatterns = [
+        /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      ];
+      for (const p of jupPatterns) {
+        const m = href.match(p);
+        if (m && m[1] && isProperMint(m[1])) { showBar(m[1]); return; }
       }
       return;
     }
 
-    const patterns = [/\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/, /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/, /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/, /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/, /[?&](?:outputMint|inputMint|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/];
-    for (const p of patterns) { const m = href.match(p); if (m && m[1] && validMint(m[1])) { showBar(m[1]); return; } }
+    // ── Raydium ──
+    // raydium.io/swap/?outputMint=XXX, raydium.io/liquidity/pool/XXX
+    if (host.includes('raydium.io')) {
+      const rayMatch = href.match(/[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/)
+                    || href.match(/\/(?:pool|pair)\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (rayMatch && rayMatch[1] && isProperMint(rayMatch[1])) { showBar(rayMatch[1]); return; }
+      return;
+    }
+
+    // ── Pump.fun ──
+    // pump.fun/coin/XXX, pump.fun/token/XXX
+    if (host.includes('pump.fun')) {
+      const pumpMatch = href.match(/\/(?:coin|token)\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (pumpMatch && pumpMatch[1] && isProperMint(pumpMatch[1])) { showBar(pumpMatch[1]); return; }
+      return;
+    }
+
+    // ── Photon ──
+    // photon-sol.tinyastro.io/token/XXX
+    if (host.includes('photon') || host.includes('tinyastro')) {
+      const photonMatch = href.match(/\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (photonMatch && photonMatch[1] && isProperMint(photonMatch[1])) { showBar(photonMatch[1]); return; }
+      return;
+    }
+
+    // ── BullX ──
+    // bullx.io/terminal?...address=XXX
+    if (host.includes('bullx.io')) {
+      const bullMatch = href.match(/[?&]address=([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (bullMatch && bullMatch[1] && isProperMint(bullMatch[1])) { showBar(bullMatch[1]); return; }
+      return;
+    }
+
+    // ── GMGN ──
+    // gmgn.ai/sol/token/XXX
+    if (host.includes('gmgn.ai')) {
+      const gmgnMatch = href.match(/\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (gmgnMatch && gmgnMatch[1] && isProperMint(gmgnMatch[1])) { showBar(gmgnMatch[1]); return; }
+      return;
+    }
+
+    // ── Birdeye, Solscan, generic patterns ──
+    const patterns = [
+      /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /[?&](?:outputMint|inputMint|mint|address|token)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+    ];
+    for (const p of patterns) {
+      const m = href.match(p);
+      if (m && m[1] && isProperMint(m[1])) { showBar(m[1]); return; }
+    }
   }
 
 
   // ═══════════════════════════════════════
-  // INLINE BADGES (non-Twitter)
+  // INLINE BADGES (non-Twitter pages)
   // ═══════════════════════════════════════
   const badgedMints = new Set();
+
   function scanText() {
+    if (barLocked) return; // Don't scan text while DexScreener is resolving
+
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode: node => { const t = node.parentElement?.tagName?.toUpperCase(); return ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT'].includes(t) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; },
+      acceptNode: node => {
+        const t = node.parentElement?.tagName?.toUpperCase();
+        return ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT'].includes(t) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      },
     });
     const found = new Set();
-    while (walker.nextNode()) { const m = walker.currentNode.textContent.match(SOLANA_RE); if (m) m.forEach(x => { if (validMint(x)) found.add(x); }); }
+    while (walker.nextNode()) {
+      const m = walker.currentNode.textContent.match(SOLANA_RE);
+      if (m) m.forEach(x => { if (isProperMint(x)) found.add(x); });
+    }
     found.forEach(mint => {
       if (badgedMints.has(mint)) return;
       badgedMints.add(mint);
       let el = document.querySelector('[href*="' + mint + '"]');
-      if (!el) { const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); while (tw.nextNode()) { if (tw.currentNode.textContent.includes(mint)) { el = tw.currentNode.parentElement; break; } } }
+      if (!el) {
+        const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        while (tw.nextNode()) { if (tw.currentNode.textContent.includes(mint)) { el = tw.currentNode.parentElement; break; } }
+      }
       if (!el || el.querySelector('.shield-badge')) return;
       const badge = document.createElement('span');
       badge.className = 'shield-badge scanning';
@@ -317,8 +397,7 @@
         if (!r || r.blocked) { badge.style.opacity = '0'; setTimeout(() => { badge.remove(); badgedMints.delete(mint); }, 300); return; }
         const tier = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
         badge.textContent = '\u26E8 ' + r.score;
-        badge.style.color = COLORS[tier];
-        badge.style.background = COLORS[tier] + '20';
+        badge.style.color = COLORS[tier]; badge.style.background = COLORS[tier] + '20';
         badge.title = 'Shield: ' + r.score + '/100';
         badge.addEventListener('click', e => { e.stopPropagation(); showBar(mint); });
       }).catch(() => { badge.style.opacity = '0'; setTimeout(() => { badge.remove(); badgedMints.delete(mint); }, 300); });
@@ -327,7 +406,7 @@
 
 
   // ═══════════════════════════════════════
-  // TWITTER/X — IntersectionObserver + MutationObserver
+  // TWITTER/X — badges on tweets
   // ═══════════════════════════════════════
   const articleMints = new Map();
   const resolvedTickers = new Map();
@@ -339,7 +418,7 @@
     const existing = tt.querySelector('[data-shield-mint="' + mint + '"]');
 
     if (existing && sd) {
-      // UPDATE existing scanning badge with real score
+      // Update scanning → scored
       const c = COLORS[sd.tier];
       existing.className = 'shield-badge';
       existing.style.cssText = 'background:' + c + '20;color:' + c + ';display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle';
@@ -349,19 +428,20 @@
       existing.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); showBar(mint); });
       return;
     }
-    if (existing) return;
+    if (existing) return; // Already has scanning badge
 
     const b = document.createElement('span');
     b.setAttribute('data-shield-mint', mint);
-    b.className = 'shield-badge' + (sd ? '' : ' scanning');
-    if (!sd) {
-      b.style.cssText = 'background:rgba(139,92,246,.15);color:#a78bfa;display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle';
-      b.textContent = '\u26E8\u2026'; b.title = 'Shield scanning\u2026';
-    } else {
+    if (sd) {
       const c = COLORS[sd.tier];
+      b.className = 'shield-badge';
       b.style.cssText = 'background:' + c + '20;color:' + c + ';display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle';
       b.textContent = '\u26E8 ' + sd.score; b.title = 'Shield: ' + sd.score + '/100 \u2014 ' + sd.verdict;
       b.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); showBar(mint); });
+    } else {
+      b.className = 'shield-badge scanning';
+      b.style.cssText = 'background:rgba(139,92,246,.15);color:#a78bfa;display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle';
+      b.textContent = '\u26E8\u2026'; b.title = 'Shield scanning\u2026';
     }
     try { tt.appendChild(b); } catch {}
   }
@@ -384,11 +464,11 @@
     const mintMap = articleMints.get(article);
     const text = article.textContent || '';
 
-    // Raw addresses
+    // 1. Raw Solana addresses
     const addrMatches = text.match(SOLANA_RE);
-    if (addrMatches) addrMatches.forEach(m => { if (validMint(m)) scanAndBadge(article, mintMap, m); });
+    if (addrMatches) addrMatches.forEach(m => { if (isProperMint(m)) scanAndBadge(article, mintMap, m); });
 
-    // Cashtags (max 3 per tweet)
+    // 2. Cashtags (max 3 per tweet)
     const tickers = [];
     article.querySelectorAll('a[href]').forEach(link => {
       const m = (link.href || '').match(/[?&]q=%24([A-Za-z]{2,10})/);
@@ -397,28 +477,28 @@
     const textMatches = text.match(/\$([A-Za-z]{2,10})\b/g);
     if (textMatches) textMatches.forEach(m => { const t = m.slice(1).toUpperCase(); if (!SKIP_TICKERS.has(t) && tickers.length < 3 && !tickers.includes(t)) tickers.push(t); });
 
+    // 3. Resolve each ticker
     tickers.forEach(ticker => {
       const key = '$' + ticker;
       if (mintMap.has(key)) return;
       mintMap.set(key, 'resolving');
+
       const cached = resolvedTickers.get(ticker);
       if (cached) { mintMap.delete(key); scanAndBadge(article, mintMap, cached); return; }
-      if (!isContextValid()) return;
-      try {
-        chrome.runtime.sendMessage({ type: 'RESOLVE_AND_SCAN', ticker, fingerprint: fp }, res => {
-          mintMap.delete(key);
-          if (chrome.runtime.lastError || !res?.mint || !res?.data) return;
-          resolvedTickers.set(ticker, res.mint);
-          cache[res.mint] = res.data;
-          const sd = { score: res.data.score, tier: tierOf(res.data), verdict: res.data.verdict || tierOf(res.data).toUpperCase() };
-          mintMap.set(res.mint, sd);
-          injectTweetBadge(article, res.mint, sd);
-        });
-      } catch {}
+
+      resolveAndScan(ticker).then(res => {
+        mintMap.delete(key);
+        if (!res?.mint || !res?.data) return;
+        resolvedTickers.set(ticker, res.mint);
+        cache[res.mint] = res.data;
+        const sd = { score: res.data.score, tier: tierOf(res.data), verdict: res.data.verdict || tierOf(res.data).toUpperCase() };
+        mintMap.set(res.mint, sd);
+        injectTweetBadge(article, res.mint, sd);
+      });
     });
   }
 
-  // ── Heartbeat: re-inject badges Twitter removes ──
+  // Heartbeat: re-inject badges Twitter removes
   function startHeartbeat() {
     setInterval(() => {
       for (const [article, mintMap] of articleMints) {
@@ -432,43 +512,37 @@
     }, 2000);
   }
 
-  // ── MutationObserver: catch new articles added to DOM ──
-  let mutationDebounce = null;
+  // MutationObserver: catch new articles
+  let mutDebounce = null;
   function startMutationObserver() {
-    const observer = new MutationObserver(() => {
-      clearTimeout(mutationDebounce);
-      mutationDebounce = setTimeout(scanVisibleArticles, 300);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    new MutationObserver(() => {
+      clearTimeout(mutDebounce);
+      mutDebounce = setTimeout(scanVisibleArticles, 300);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
-  // ── IntersectionObserver: only scan articles visible on screen ──
-  let intersectionObserver = null;
+  // IntersectionObserver: only scan visible tweets
+  let intObserver = null;
   function startIntersectionObserver() {
-    if (!('IntersectionObserver' in window)) return; // Fallback to mutation-only
-    intersectionObserver = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting && entry.target.tagName === 'ARTICLE') {
-          if (!articleMints.has(entry.target)) scanArticle(entry.target);
-        }
+    if (!('IntersectionObserver' in window)) return;
+    intObserver = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting && e.target.tagName === 'ARTICLE' && !articleMints.has(e.target)) scanArticle(e.target);
       });
-    }, { rootMargin: '200px' }); // Pre-scan 200px before visible
+    }, { rootMargin: '200px' });
   }
 
   function scanVisibleArticles() {
     document.querySelectorAll('article').forEach(a => {
       if (articleMints.has(a)) return;
-      if (intersectionObserver) {
-        intersectionObserver.observe(a); // Will fire when visible
-      } else {
-        scanArticle(a); // Fallback: scan immediately
-      }
+      if (intObserver) intObserver.observe(a);
+      else scanArticle(a);
     });
   }
 
 
   // ═══════════════════════════════════════
-  // MESSAGE HANDLER
+  // MESSAGE HANDLER (wallet connect)
   // ═══════════════════════════════════════
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'SHIELD_CONNECT_WALLET') {
@@ -480,7 +554,7 @@
       };
       window.addEventListener('message', handler);
       window.postMessage({ type: 'SHIELD_REQ_CONNECT' }, '*');
-      setTimeout(() => { window.removeEventListener('message', handler); sendResponse({ error: 'Phantom connection timed out.' }); }, 15000);
+      setTimeout(() => { window.removeEventListener('message', handler); sendResponse({ error: 'Phantom timed out.' }); }, 15000);
       return true;
     }
     if (msg.type === 'SHIELD_STORE_WALLET') { try { localStorage.setItem('shield_wallet', msg.address); } catch {} sendResponse({ ok: true }); }
@@ -504,8 +578,8 @@
     setInterval(() => {
       if (location.href !== lastURL) {
         lastURL = location.href;
-        const oldBar = document.getElementById('shield-bar');
-        if (oldBar) { oldBar.classList.add('closing'); setTimeout(() => { oldBar.remove(); if (document.body) document.body.style.marginTop = ''; }, 250); }
+        barLocked = false;
+        removeBar();
         badgedMints.clear();
         setTimeout(detectURL, 800);
         setTimeout(scanText, 2500);

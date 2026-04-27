@@ -39,27 +39,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     const url = tab?.url || '';
     let mint = null;
 
+    // ── DexScreener ──
     if (url.includes('dexscreener.com')) {
-      const dexMatch = url.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
+      const dexMatch = url.match(/\/(?:solana|token\/solana)\/([a-zA-Z0-9]{32,44})/i);
       if (dexMatch?.[1]) {
         switchTab('scan');
         showLoading('Resolving token from DexScreener\u2026');
 
         const STABLES = new Set([
-          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
-          'So11111111111111111111111111111111111111112',     // SOL/WSOL
-          '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // stSOL
-          'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
+          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+          'So11111111111111111111111111111111111111112',
+          '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
+          'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
         ]);
 
+        // Try pairs API first, then token-pairs API
         try {
-          const pairRes = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${dexMatch[1]}`, {}, { retries: 2, timeout: 8000 }).then(r => r.ok ? r.json() : null);
-          const pair = pairRes?.pair || pairRes?.pairs?.[0];
+          let pair = null;
+          const r1 = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${dexMatch[1]}`, {}, { retries: 1, timeout: 6000 }).then(r => r.ok ? r.json() : null);
+          pair = r1?.pair || r1?.pairs?.[0] || null;
+
+          if (!pair) {
+            const r2 = await fetchRetry(`https://api.dexscreener.com/token-pairs/v1/solana/${dexMatch[1]}`, {}, { retries: 1, timeout: 6000 }).then(r => r.ok ? r.json() : null);
+            if (Array.isArray(r2) && r2.length > 0) pair = r2.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+          }
+
           if (pair) {
             const base = pair.baseToken;
             const quote = pair.quoteToken;
-            // Pick the non-stablecoin token
             if (base?.address && !STABLES.has(base.address)) mint = base.address;
             else if (quote?.address && !STABLES.has(quote.address)) mint = quote.address;
           }
@@ -67,8 +75,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!mint && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(dexMatch[1])) mint = dexMatch[1];
       }
     } else {
-      const mintMatch = url.match(/\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})|\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})|\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})|[?&](?:outputMint|inputMint|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/);
-      mint = mintMatch?.[1] || mintMatch?.[2] || mintMatch?.[3] || mintMatch?.[4] || null;
+      // ── All other sites: Jupiter, Raydium, Pump.fun, Photon, BullX, GMGN, Birdeye, Solscan ──
+      const allPatterns = [
+        /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,           // Jupiter /swap/SOL-XXX
+        /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                         // Jupiter /swap/XXX
+        /\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                   // GMGN
+        /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,           // Birdeye, Photon, generic
+        /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                      // Solscan
+        /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                         // Pump.fun
+        /\/(?:pool|pair)\/([1-9A-HJ-NP-Za-km-z]{32,44})/,                // Raydium
+        /[?&](?:outputMint|inputMint|mint|address|token)=([1-9A-HJ-NP-Za-km-z]{32,44})/, // Query params
+      ];
+      for (const p of allPatterns) {
+        const m = url.match(p);
+        if (m && m[1] && /[A-Z]/.test(m[1]) && /[a-z]/.test(m[1])) { mint = m[1]; break; }
+      }
     }
 
     if (mint) {
