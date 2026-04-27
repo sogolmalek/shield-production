@@ -14,6 +14,7 @@
 
   "host_permissions": [
     "https://shield-production-8awh.onrender.com/*",
+    "https://api.dexscreener.com/*",
     "https://li.quest/*",
     "https://jumper.exchange/*",
     "https://phantom.app/*",

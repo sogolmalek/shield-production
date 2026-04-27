@@ -283,62 +283,45 @@
   // ── URL DETECTION ──
   function detectURL() {
     const href = location.href;
+    const host = location.hostname;
+
+    // DexScreener: URL is pair address, not token address. Use their API.
+    if (host.includes('dexscreener.com')) {
+      const dexMatch = href.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
+      if (dexMatch && dexMatch[1]) {
+        resolveDexScreenerPair(dexMatch[1]);
+        return;
+      }
+    }
+
+    // Other sites: try normal URL patterns
     const patterns = [
-      /\/(?:en\/)?solana\/([a-zA-Z0-9]{32,44})/i,
-      /\/token\/(?:solana\/)?([a-zA-Z0-9]{32,44})/i,
-      /\/address\/([a-zA-Z0-9]{32,44})/i,
-      /\/coin\/([a-zA-Z0-9]{32,44})/i,
-      /\/tokens\/([a-zA-Z0-9]{32,44})/i,
-      /[?&]outputMint=([a-zA-Z0-9]{32,44})/i,
-      /[?&]inputMint=([a-zA-Z0-9]{32,44})/i,
-      /[?&](?:from|to|mint)=([a-zA-Z0-9]{32,44})/i,
+      /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /[?&]inputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /[?&](?:from|to|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
     ];
     for (const p of patterns) {
       const m = href.match(p);
-      if (m && m[1]) {
-        let addr = m[1];
-        if (addr === addr.toLowerCase()) {
-          // URL is lowercase — try DOM first
-          const correctCase = findCorrectCaseAddress(addr);
-          if (correctCase) { addr = correctCase; }
-          else {
-            // DOM not ready yet or can't find — send lowercase to server, server will resolve
-            showBar(addr);
-            return;
-          }
-        }
-        if (valid(addr)) { showBar(addr); return; }
+      if (m && m[1] && valid(m[1]) && isProperCase(m[1])) {
+        showBar(m[1]);
+        return;
       }
     }
   }
 
-  // Find correct-case Solana address from page DOM (DexScreener lowercases URLs)
-  function findCorrectCaseAddress(lowercaseAddr) {
-    // Strategy 1: Check all text on page for mixed-case version
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const text = walker.currentNode.textContent;
-      if (!text || text.length < 32) continue;
-      const matches = text.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g);
-      if (matches) {
-        for (const match of matches) {
-          if (match.toLowerCase() === lowercaseAddr && isProperCase(match)) return match;
-        }
+  // DexScreener pair → token address via background (avoids CORS)
+  function resolveDexScreenerPair(pairAddress) {
+    chrome.runtime.sendMessage({ type: 'RESOLVE_DEXSCREENER', pairAddress }, (res) => {
+      if (chrome.runtime.lastError) { console.log('[SHIELD] DexScreener resolve error:', chrome.runtime.lastError.message); return; }
+      if (res?.tokenAddress) {
+        console.log('[SHIELD] DexScreener resolved:', pairAddress.slice(0,8), '→', res.tokenAddress, res.symbol);
+        showBar(res.tokenAddress);
       }
-    }
-    // Strategy 2: Check data attributes and clipboard elements
-    const attrEls = document.querySelectorAll('[data-address], [data-mint], [data-token], [data-clipboard-text], [data-copy], [title], [value]');
-    for (const el of attrEls) {
-      const candidates = [
-        el.getAttribute('data-address'), el.getAttribute('data-mint'),
-        el.getAttribute('data-token'), el.getAttribute('data-clipboard-text'),
-        el.getAttribute('data-copy'), el.getAttribute('title'), el.getAttribute('value'),
-      ];
-      for (const c of candidates) {
-        if (c && c.length >= 32 && c.length <= 44 && c.toLowerCase() === lowercaseAddr && isProperCase(c)) return c;
-      }
-    }
-    return null;
+    });
   }
 
   // ── MESSAGE HANDLER ──
@@ -426,7 +409,7 @@
         }
         // Also try raw base58 match on visible link text (e.g. "dexscreener.com/solana/ABC...")
         const rawInUrl = url.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g);
-        if (rawInUrl) rawInUrl.forEach(m => { if (valid(m)) found.add(m); });
+        if (rawInUrl) rawInUrl.forEach(m => { if (valid(m) && isProperCase(m)) found.add(m); });
       }
 
       // Twitter card links: data-testid="card.wrapper" often has the real URL

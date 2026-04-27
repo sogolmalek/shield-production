@@ -178,6 +178,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── RESOLVE_DEXSCREENER — pair address → token address ──
+  if (msg.type === 'RESOLVE_DEXSCREENER') {
+    (async () => {
+      try {
+        const res = await fetch(`https://api.dexscreener.com/latest/dex/pairs/solana/${msg.pairAddress}`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) { sendResponse({ tokenAddress: null }); return; }
+        const data = await res.json();
+        const pair = data?.pair || data?.pairs?.[0];
+        if (pair?.baseToken?.address) {
+          sendResponse({ tokenAddress: pair.baseToken.address, symbol: pair.baseToken.symbol, name: pair.baseToken.name });
+        } else {
+          sendResponse({ tokenAddress: null });
+        }
+      } catch (e) {
+        console.error('[SHIELD] DexScreener resolve error:', e.message);
+        sendResponse({ tokenAddress: null });
+      }
+    })();
+    return true;
+  }
+
   // ── TRIAL_ENDED notification ──
   if (msg.type === 'CHECK_TRIAL') {
     (async () => {
