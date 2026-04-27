@@ -260,6 +260,51 @@
   // ═══════════════════════════════════════
   // URL DETECTION
   // ═══════════════════════════════════════
+
+  // ── DexScreener DOM scraper: extract proper-case token address from rendered page ──
+  function scrapeDexScreenerToken() {
+    // 1. Links to Solscan/Birdeye/Jupiter with correct-case address
+    const links = document.querySelectorAll('a[href]');
+    for (const link of links) {
+      const h = link.href || '';
+      const sm = h.match(/solscan\.io\/(?:token|account)\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (sm && sm[1] && !SKIP.has(sm[1]) && /[A-Z]/.test(sm[1]) && /[a-z]/.test(sm[1])) return sm[1];
+      const bm = h.match(/birdeye\.so\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (bm && bm[1] && !SKIP.has(bm[1]) && /[A-Z]/.test(bm[1]) && /[a-z]/.test(bm[1])) return bm[1];
+      const jm = h.match(/jup\.ag\/.*?([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      if (jm && jm[1] && !SKIP.has(jm[1]) && /[A-Z]/.test(jm[1]) && /[a-z]/.test(jm[1])) return jm[1];
+    }
+    // 2. Any proper-case Base58 address displayed in page text (skip URL-derived lowercase)
+    const body = document.body?.innerText || '';
+    const all = body.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g) || [];
+    for (const addr of all) {
+      if (!SKIP.has(addr) && /[A-Z]/.test(addr) && /[a-z]/.test(addr)) return addr;
+    }
+    return null;
+  }
+
+  // ── Wait for DexScreener SPA to render, then scrape ──
+  function waitForDexScreenerToken(callback, maxWait = 15000) {
+    const start = Date.now();
+    // Try immediately
+    const imm = scrapeDexScreenerToken();
+    if (imm) { callback(imm); return; }
+
+    // Poll every 500ms until DOM has a proper token address
+    const interval = setInterval(() => {
+      const addr = scrapeDexScreenerToken();
+      if (addr) {
+        clearInterval(interval);
+        callback(addr);
+        return;
+      }
+      if (Date.now() - start > maxWait) {
+        clearInterval(interval);
+        callback(null); // Give up
+      }
+    }, 500);
+  }
+
   function detectURL() {
     const href = location.href;
     const host = location.hostname;
@@ -268,16 +313,25 @@
       const m = href.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
       if (m && m[1]) {
         const addr = m[1];
+
+        // Strategy: try DexScreener API first, then DOM scrape, then backend
         resolveDexPair(addr).then(res => {
           if (res && res.tokenAddress) {
             showBar(res.tokenAddress);
           } else if (res && res.isStablePair) {
             showStablePairBar(res.base, res.quote);
           } else {
-            // Fallback: send to backend which has 4-method resolve
-            scan(addr).then(r => {
-              if (r && !r.blocked && r.score >= 0) showBar(r.address || addr);
-              else if (r && r.blocked) showBar(addr);
+            // API failed — wait for DexScreener SPA to render and scrape token address from DOM
+            waitForDexScreenerToken(scraped => {
+              if (scraped) {
+                showBar(scraped);
+              } else {
+                // Nothing found in DOM either — send lowercase to backend as last resort
+                scan(addr).then(r => {
+                  if (r && !r.blocked && r.score > 0) showBar(r.address || addr);
+                  else if (r && r.blocked) showBar(addr);
+                });
+              }
             });
           }
         });
