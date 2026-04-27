@@ -31,7 +31,12 @@
   })();
 
   function valid(a) {
-    return a.length >= 32 && a.length <= 44 && !SKIP.has(a);
+    if (a.length < 32 || a.length > 44 || SKIP.has(a)) return false;
+    // Solana base58 addresses MUST have mixed case — reject all lowercase or all uppercase
+    if (a === a.toLowerCase() || a === a.toUpperCase()) return false;
+    // Must match base58 charset
+    if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(a)) return false;
+    return true;
   }
 
   // Inject bridge for Phantom access
@@ -276,19 +281,63 @@
   function detectURL() {
     const href = location.href;
     const patterns = [
-      /\/(?:en\/)?solana\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /[?&]inputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
-      /[?&](?:from|to|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/(?:en\/)?solana\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /[?&]inputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/i,
+      /[?&](?:from|to|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/i,
     ];
     for (const p of patterns) {
       const m = href.match(p);
-      if (m && m[1] && valid(m[1])) { showBar(m[1]); return; }
+      if (m && m[1]) {
+        let addr = m[1];
+        // URL might be lowercase — try to find correct-case address from page DOM
+        if (addr === addr.toLowerCase()) {
+          const correctCase = findCorrectCaseAddress(addr);
+          if (correctCase) addr = correctCase;
+          else return; // can't find correct case, skip
+        }
+        if (valid(addr)) { showBar(addr); return; }
+      }
     }
+  }
+
+  // Find correct-case Solana address from page DOM (DexScreener lowercases URLs)
+  function findCorrectCaseAddress(lowercaseAddr) {
+    // Strategy 1: Look for copy buttons, data attributes, or elements with the address
+    const selectors = [
+      '[data-address]', '[data-mint]', '[data-token]',
+      'button[title]', 'a[title]', '[class*="address"]', '[class*="mint"]',
+      'input[value]', 'span', 'div', 'a',
+    ];
+    for (const sel of selectors) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        const candidates = [
+          el.getAttribute('data-address'),
+          el.getAttribute('data-mint'),
+          el.getAttribute('data-token'),
+          el.getAttribute('title'),
+          el.getAttribute('value'),
+          el.textContent?.trim(),
+        ];
+        for (const c of candidates) {
+          if (c && c.length >= 32 && c.length <= 44 && c.toLowerCase() === lowercaseAddr && valid(c)) {
+            return c;
+          }
+        }
+      }
+    }
+    // Strategy 2: Check clipboard copy buttons (DexScreener has copy address)
+    const clipEls = document.querySelectorAll('[data-clipboard-text], [data-copy]');
+    for (const el of clipEls) {
+      const val = el.getAttribute('data-clipboard-text') || el.getAttribute('data-copy');
+      if (val && val.toLowerCase() === lowercaseAddr && valid(val)) return val;
+    }
+    return null;
   }
 
   // ── MESSAGE HANDLER ──
