@@ -359,7 +359,7 @@ async function scoreTok(mintAddress) {
 
   // Parallel fetch from 4 sources
   const [rcRes, rpcRes, grRes, jupRes] = await Promise.allSettled([
-    fetch(`${RUGCHECK_API}/tokens/${mintAddress}/report`, { signal: AbortSignal.timeout(10000) })
+    fetch(`${RUGCHECK_API}/tokens/${mintAddress}/report/summary`, { signal: AbortSignal.timeout(6000) })
       .then(r => (r.ok ? r.json() : null)),
     getRPCData(mintAddress),
     goldRush ? goldRush.getTokenHolders(mintAddress).catch(() => null) : Promise.resolve(null),
