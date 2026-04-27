@@ -141,10 +141,73 @@ function depositPayload(amount = 5) {
 // ── Routes ──
 app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.3.0', worker: process.pid }));
 
+// ── Anti-manipulation: IP tracking + compound fingerprint ──
+const ipTracker = new Map();  // IP → { fingerprints: Set, totalScans, firstSeen, blocked }
+const IP_MAX_FINGERPRINTS = 5;   // max unique fingerprints per IP (prevents reset spam)
+const IP_MAX_FREE_SCANS   = 50;  // max total free scans per IP across all fingerprints
+const IP_BLOCK_DURATION   = 24 * 60 * 60 * 1000; // 24h block
+
+function getIPTrack(ip) {
+  if (!ipTracker.has(ip)) {
+    ipTracker.set(ip, { fingerprints: new Set(), totalScans: 0, firstSeen: Date.now(), blocked: false, blockedUntil: 0 });
+  }
+  return ipTracker.get(ip);
+}
+
+function checkAbuse(ip, fingerprint) {
+  const track = getIPTrack(ip);
+
+  // Unblock if duration passed
+  if (track.blocked && Date.now() > track.blockedUntil) {
+    track.blocked = false;
+  }
+  if (track.blocked) {
+    return { blocked: true, reason: 'ip_blocked', message: 'Too many accounts from this IP. Try again in 24h.' };
+  }
+
+  track.fingerprints.add(fingerprint);
+
+  // Too many unique fingerprints from same IP = gaming the system
+  if (track.fingerprints.size > IP_MAX_FINGERPRINTS) {
+    track.blocked = true;
+    track.blockedUntil = Date.now() + IP_BLOCK_DURATION;
+    console.warn(`[ABUSE] IP ${ip} blocked — ${track.fingerprints.size} fingerprints detected`);
+    return { blocked: true, reason: 'abuse_detected', message: 'Unusual activity detected. Access temporarily suspended.' };
+  }
+
+  // Total free scans across all fingerprints from same IP
+  if (track.totalScans >= IP_MAX_FREE_SCANS) {
+    return { blocked: true, reason: 'ip_free_limit', message: `Free limit reached for this network. Top up $1 to continue.` };
+  }
+
+  return { blocked: false };
+}
+
+// Clean old IP entries every hour
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, track] of ipTracker) {
+    if (now - track.firstSeen > 7 * 24 * 60 * 60 * 1000) ipTracker.delete(ip); // 7 day TTL
+  }
+}, 60 * 60 * 1000);
+
 // ── SCAN ──
 app.post('/api/scan', scanLimiter, async (req, res) => {
   let { token, wallet, fingerprint } = req.body;
   if (!token) return res.status(400).json({ error: 'token_required' });
+
+  // Compound fingerprint: combine client fp + IP + wallet for harder-to-fake identity
+  const clientIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+  const compoundFP = fingerprint
+    ? `${fingerprint}_${clientIP.replace(/[.:]/g, '')}`
+    : `ip_${clientIP.replace(/[.:]/g, '')}`;
+
+  // Anti-manipulation: check IP-level abuse
+  const abuseCheck = checkAbuse(clientIP, compoundFP);
+  if (abuseCheck.blocked && !wallet) {
+    // Paying users bypass IP limits
+    return res.status(429).json({ error: abuseCheck.reason, message: abuseCheck.message, payment: depositPayload() });
+  }
 
   // Fix lowercase addresses (DexScreener lowercases URLs)
   // Base58 is case-sensitive so we can't decode lowercase. Instead:
@@ -208,7 +271,7 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
   }
 
   if (billingType === 'free_trial') {
-    const fp   = fingerprint || wallet || req.ip || 'anon';
+    const fp   = compoundFP;
     const user = getOrCreateUser(fp);
     const today = new Date().toDateString();
     if (user.lastReset !== today) { user.scansToday = 0; user.lastReset = today; }
@@ -234,6 +297,11 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
     user.scansToday++;
     user.totalScans++;
     user.totalFreeScans = (user.totalFreeScans || 0) + 1;
+
+    // Track IP-level total free scans
+    const ipTrack = getIPTrack(clientIP);
+    ipTrack.totalScans++;
+
     billingInfo = { freeScansLeft: FREE_SCANS_PER_DAY - user.scansToday, freeTotalLeft: FREE_TOTAL_MAX - user.totalFreeScans };
   }
 
@@ -699,4 +767,12 @@ async function getRPCData(mintAddress) {
 
 app.listen(PORT, () => {
   console.log(`⛨  Worker ${process.pid} on :${PORT}`);
+
+  // Keep-alive: ping self every 14 min to prevent Render free tier sleep
+  setInterval(() => {
+    fetch('https://shield-production-8awh.onrender.com/')
+      .then(r => r.json())
+      .then(() => console.log('[KEEPALIVE] ok'))
+      .catch(() => {});
+  }, 14 * 60 * 1000);
 });

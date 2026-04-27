@@ -33,6 +33,18 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[SHIELD] Installed — 3-day free trial (10 scans/day, 30 total).');
 });
 
+// ── Pre-warm server on startup (prevents cold start delay) ──
+function warmServer() {
+  fetch(SHIELD_API + '/').catch(() => {});
+}
+warmServer();
+
+// Also warm on every service worker wake
+chrome.runtime.onStartup?.addListener(warmServer);
+
+// Periodic warm every 13 min via alarm
+chrome.alarms.create('shield-server-warm', { periodInMinutes: 13 });
+
 // ── Message handler ──
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
@@ -234,22 +246,104 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── TRIAL_ENDED notification ──
+  // ── NOTIFICATIONS ──
   if (msg.type === 'CHECK_TRIAL') {
     (async () => {
-      const d = await chrome.storage.local.get(['shieldInstallDate', 'trialEndedNotified']);
+      const d = await chrome.storage.local.get([
+        'shieldInstallDate', 'trialEndedNotified', 'trialEndingSoonNotified',
+        'shieldWalletConnected', 'shieldWalletAddr',
+        'freeDailyUsed', 'freeTotalUsed',
+      ]);
       const daysSince = Math.floor((Date.now() - (d.shieldInstallDate || Date.now())) / 86400000);
-      if (daysSince >= FREE_TRIAL_DAYS && !d.trialEndedNotified) {
-        chrome.storage.local.set({ trialEndedNotified: true });
-        chrome.notifications.create('shield-trial-ended', {
-          type:    'basic',
-          iconUrl: 'icons/icon128.png',
-          title:   '⛨ Shield — Free Trial Ended',
-          message: 'Top up $1 USDC to keep scanning. $0.01 per scan, no subscription.',
+      const totalUsed = d.freeTotalUsed || 0;
+
+      // Trial ending soon (day 2, 5 scans left)
+      if (daysSince >= 2 && !d.trialEndingSoonNotified && totalUsed >= 25) {
+        chrome.storage.local.set({ trialEndingSoonNotified: true });
+        chrome.notifications.create('shield-trial-ending', {
+          type: 'basic', iconUrl: 'icons/icon128.png',
+          title: '\u26E8 Shield — Trial Ending Soon',
+          message: `${FREE_TOTAL_MAX - totalUsed} free scans left. Connect Phantom wallet to top up when ready.`,
         });
       }
+
+      // Trial ended
+      if ((daysSince >= FREE_TRIAL_DAYS || totalUsed >= FREE_TOTAL_MAX) && !d.trialEndedNotified) {
+        chrome.storage.local.set({ trialEndedNotified: true });
+        chrome.notifications.create('shield-trial-ended', {
+          type: 'basic', iconUrl: 'icons/icon128.png',
+          title: '\u26E8 Shield — Free Trial Ended',
+          message: 'Top up $1 USDC for 100 more scans. $0.01 per scan.',
+        });
+      }
+
+      // Low balance check for paying users
+      if (d.shieldWalletConnected && d.shieldWalletAddr) {
+        try {
+          const balRes = await fetch(`${SHIELD_API}/api/credits/${d.shieldWalletAddr}`);
+          const bal = await balRes.json();
+          if (bal.lowBalance && bal.scansRemaining > 0) {
+            const lowBalNotified = (await chrome.storage.local.get(['lowBalanceNotified'])).lowBalanceNotified;
+            if (!lowBalNotified) {
+              chrome.storage.local.set({ lowBalanceNotified: true });
+              chrome.notifications.create('shield-low-balance', {
+                type: 'basic', iconUrl: 'icons/icon128.png',
+                title: '\u26E8 Shield — Low Balance',
+                message: `${bal.scansRemaining} scans left ($${bal.balance.toFixed(2)}). Top up to keep scanning.`,
+              });
+            }
+          } else if (bal.empty) {
+            chrome.notifications.create('shield-empty-balance', {
+              type: 'basic', iconUrl: 'icons/icon128.png',
+              title: '\u26E8 Shield — Credits Empty',
+              message: 'Deposit USDC to continue scanning. $1 = 100 scans.',
+            });
+          } else if (!bal.lowBalance) {
+            // Reset low balance notification when they top up
+            chrome.storage.local.set({ lowBalanceNotified: false });
+          }
+        } catch {}
+      }
+
       sendResponse({ ok: true });
     })();
     return true;
+  }
+});
+
+// ── Periodic notification check (every 30 min) ──
+chrome.alarms.create('shield-notification-check', { periodInMinutes: 30 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'shield-server-warm') {
+    warmServer();
+  }
+  if (alarm.name === 'shield-notification-check') {
+    chrome.storage.local.get(['shieldWalletConnected', 'shieldWalletAddr'], async (d) => {
+      if (!d.shieldWalletConnected || !d.shieldWalletAddr) return;
+      try {
+        const res = await fetch(`${SHIELD_API}/api/credits/${d.shieldWalletAddr}`);
+        const bal = await res.json();
+        if (bal.empty) {
+          chrome.notifications.create('shield-empty-periodic', {
+            type: 'basic', iconUrl: 'icons/icon128.png',
+            title: '\u26E8 Shield — Credits Empty',
+            message: 'You have no scans left. Deposit $1 USDC to get 100 scans.',
+          });
+        } else if (bal.lowBalance) {
+          chrome.notifications.create('shield-low-periodic', {
+            type: 'basic', iconUrl: 'icons/icon128.png',
+            title: '\u26E8 Shield — Running Low',
+            message: `${bal.scansRemaining} scans remaining. Top up soon.`,
+          });
+        }
+      } catch {}
+    });
+  }
+});
+
+// ── Notification click → open popup or payment ──
+chrome.notifications.onClicked.addListener((notifId) => {
+  if (notifId.startsWith('shield-')) {
+    chrome.action.openPopup?.() || chrome.tabs.create({ url: 'src/popup.html' });
   }
 });

@@ -21,8 +21,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ── Auto-scan if already on a token page ──
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const mintMatch = tab?.url?.match(/\/(?:en\/)?solana\/([1-9A-HJ-NP-Za-km-z]{32,44})|\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})|\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})|[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/);
-    const mint = mintMatch?.[1] || mintMatch?.[2] || mintMatch?.[3] || mintMatch?.[4];
+    const url = tab?.url || '';
+    let mint = null;
+
+    // DexScreener: URL might be pair address or token address, might be lowercase
+    if (url.includes('dexscreener.com')) {
+      const dexMatch = url.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
+      if (dexMatch && dexMatch[1]) {
+        // Try DexScreener API to resolve pair → token
+        switchTab('scan');
+        el('sLd')?.classList.add('show');
+        try {
+          const pairRes = await fetch(`https://api.dexscreener.com/latest/dex/pairs/solana/${dexMatch[1]}`).then(r => r.ok ? r.json() : null);
+          const pair = pairRes?.pair || pairRes?.pairs?.[0];
+          mint = pair?.baseToken?.address || null;
+        } catch {}
+        // Fallback: if URL has proper-case address, use it directly
+        if (!mint && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(dexMatch[1])) {
+          mint = dexMatch[1];
+        }
+      }
+    } else {
+      // Other sites: extract token from URL
+      const mintMatch = url.match(/\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})|\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})|\/coin\/([1-9A-HJ-NP-Za-km-z]{32,44})|[?&](?:outputMint|inputMint|mint)=([1-9A-HJ-NP-Za-km-z]{32,44})/);
+      mint = mintMatch?.[1] || mintMatch?.[2] || mintMatch?.[3] || mintMatch?.[4] || null;
+    }
+
     if (mint) {
       switchTab('scan');
       el('rAd').textContent = mint;

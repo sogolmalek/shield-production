@@ -107,7 +107,19 @@
 
     scan(mint).then(r => {
       if (!r) { bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score danger">Error</span><span class="sb-verdict">Could not reach API</span>'; addClose(); return; }
-      if (r.blocked) { bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score warning">\u26A1 Credits</span><span class="sb-verdict" style="flex:1">' + (r.message || 'Free trial ended') + '</span>'; addClose(); return; }
+      if (r.blocked) {
+        const paymentInfo = r.payment || {};
+        const deeplink = paymentInfo.deeplink || 'https://phantom.app/ul/transfer?recipient=A59AVvijPfVC62vxpWqHevgc5FEaQ6bEEmdvSdMYDebs&amount=1&splToken=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&label=Shield+Credits';
+        bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score warning">\u26A1</span><span class="sb-verdict" style="flex:1;font-size:12px">' + (r.message || 'Free trial ended') + '</span><button class="sb-pay" id="sb-topup-1">$1</button><button class="sb-pay" id="sb-topup-5">$5</button><button class="sb-pay" id="sb-topup-10">$10</button>';
+        addClose();
+        [1,5,10].forEach(amt => {
+          document.getElementById('sb-topup-' + amt)?.addEventListener('click', () => {
+            const link = deeplink.replace('amount=1', 'amount=' + amt).replace('amount=5', 'amount=' + amt);
+            window.open(link, '_blank');
+          });
+        });
+        return;
+      }
       const tier = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
       const verdict = r.verdict || tier.toUpperCase();
       bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score ' + tier + '">' + r.score + '</span><span class="sb-verdict">' + verdict + '</span><span style="font-size:10px;color:rgba(255,255,255,.3)">' + mint.slice(0, 6) + '\u2026' + mint.slice(-4) + '</span>' + (r.score >= 35 ? '<button class="sb-buy" id="sb-buy-btn">\u26A1 Buy Safe via LI.FI</button>' : '<span style="font-size:11px;color:#ef4444;font-weight:600">\uD83D\uDED1 Swap Blocked</span>');
@@ -127,7 +139,14 @@
 
     if (host.includes('dexscreener.com')) {
       const m = href.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
-      if (m && m[1]) { resolveDexPair(m[1]).then(addr => { if (addr) showBar(addr); }); }
+      if (m && m[1]) {
+        const addr = m[1];
+        // Try pair resolve first, fallback to direct scan (might be token address not pair)
+        resolveDexPair(addr).then(tokenAddr => {
+          if (tokenAddr) { showBar(tokenAddr); }
+          else if (validMint(addr)) { showBar(addr); }  // URL has token address directly
+        });
+      }
       return;
     }
 
