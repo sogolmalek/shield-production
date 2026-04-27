@@ -44,10 +44,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (dexMatch?.[1]) {
         switchTab('scan');
         showLoading('Resolving token from DexScreener\u2026');
+
+        const STABLES = new Set([
+          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+          'So11111111111111111111111111111111111111112',     // SOL/WSOL
+          '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // stSOL
+          'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
+        ]);
+
         try {
           const pairRes = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${dexMatch[1]}`, {}, { retries: 2, timeout: 8000 }).then(r => r.ok ? r.json() : null);
           const pair = pairRes?.pair || pairRes?.pairs?.[0];
-          mint = pair?.baseToken?.address || null;
+          if (pair) {
+            const base = pair.baseToken;
+            const quote = pair.quoteToken;
+            // Pick the non-stablecoin token
+            if (base?.address && !STABLES.has(base.address)) mint = base.address;
+            else if (quote?.address && !STABLES.has(quote.address)) mint = quote.address;
+          }
         } catch {}
         if (!mint && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(dexMatch[1])) mint = dexMatch[1];
       }

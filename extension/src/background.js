@@ -258,16 +258,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── RESOLVE_DEXSCREENER ──
+  // ── RESOLVE_DEXSCREENER — stablecoin-aware pair→token resolve ──
   if (msg.type === 'RESOLVE_DEXSCREENER') {
     (async () => {
       try {
+        const STABLES = new Set([
+          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+          'So11111111111111111111111111111111111111112',     // SOL/WSOL
+          '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // stSOL
+          'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
+          'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK (skip as quote)
+        ]);
+
         const res = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${msg.pairAddress}`, {}, { retries: 2, timeout: 8000 });
         if (!res.ok) { sendResponse({ tokenAddress: null }); return; }
         const data = await res.json();
         const pair = data?.pair || data?.pairs?.[0];
-        sendResponse(pair?.baseToken?.address
-          ? { tokenAddress: pair.baseToken.address, symbol: pair.baseToken.symbol, name: pair.baseToken.name }
+        if (!pair) { sendResponse({ tokenAddress: null }); return; }
+
+        const base  = pair.baseToken;
+        const quote = pair.quoteToken;
+
+        // If baseToken is a stablecoin/SOL, the interesting token is quoteToken
+        // If quoteToken is a stablecoin/SOL, the interesting token is baseToken
+        let tokenAddr, tokenSymbol, tokenName;
+        if (base?.address && !STABLES.has(base.address)) {
+          tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
+        } else if (quote?.address && !STABLES.has(quote.address)) {
+          tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
+        } else {
+          // Both are stablecoins/known tokens — skip
+          tokenAddr = null;
+        }
+
+        sendResponse(tokenAddr
+          ? { tokenAddress: tokenAddr, symbol: tokenSymbol, name: tokenName }
           : { tokenAddress: null });
       } catch (e) {
         console.error('[SHIELD] DexScreener error:', e.message);

@@ -30,7 +30,7 @@
   function validMint(a) {
     if (a.length < 32 || a.length > 44 || SKIP.has(a)) return false;
     if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(a)) return false;
-    if (a === a.toLowerCase() || a === a.toUpperCase()) return false;
+    // Don't require mixed case — lowercase addresses from DexScreener are valid pair/token IDs
     return true;
   }
 
@@ -216,9 +216,18 @@
     if (host.includes('dexscreener.com')) {
       const m = href.match(/\/solana\/([a-zA-Z0-9]{32,44})/i);
       if (m && m[1]) {
-        resolveDexPair(m[1]).then(tokenAddr => {
+        const addr = m[1];
+        // Always try DexScreener pair API first — handles lowercase, stablecoin pairs, everything
+        resolveDexPair(addr).then(tokenAddr => {
           if (tokenAddr) showBar(tokenAddr);
-          else if (validMint(m[1])) showBar(m[1]);
+          // If pair resolve fails AND address has proper Base58 case, try direct scan
+          else if (/[A-Z]/.test(addr) && /[a-z]/.test(addr)) showBar(addr);
+          // If all lowercase, try via backend resolve (Jupiter search)
+          else if (addr === addr.toLowerCase()) {
+            scan(addr).then(r => {
+              if (r && !r.blocked && r.score >= 0 && r.address) showBar(r.address);
+            });
+          }
         });
       }
       return;

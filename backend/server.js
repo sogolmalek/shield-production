@@ -295,20 +295,51 @@ app.post('/api/scan', scanLimiter, async (req, res) => {
   const abuseCheck = checkAbuse(clientIP, compoundFP);
   if (abuseCheck.blocked && !wallet) return res.status(429).json({ error: abuseCheck.reason, message: abuseCheck.message, payment: depositPayload() });
 
-  // ── Address resolution (lowercase DexScreener) ──
+  // ── Address resolution (lowercase from DexScreener URLs, pair addresses, etc.) ──
   if (token === token.toLowerCase() && token.length >= 32) {
     let resolved = false;
+
+    // Method 1: Jupiter search by first 8 chars
     try {
       const r = await fetchWithRetry(`https://api.jup.ag/tokens/v2/search?query=${token.slice(0, 8)}`, {}, { retries: 2, timeout: 5000 });
       if (r.ok) { const tokens = await r.json(); if (Array.isArray(tokens)) { const m = tokens.find(t => t.id?.toLowerCase() === token.toLowerCase()); if (m) { token = m.id; resolved = true; } } }
     } catch {}
+
+    // Method 2: RugCheck (sometimes handles case-insensitive)
     if (!resolved) {
       try {
         const r = await fetchWithRetry(`${RUGCHECK_API}/tokens/${token}/report/summary`, {}, { retries: 1, timeout: 5000 });
         if (r.ok) { const d = await r.json(); if (d.mint?.toLowerCase() === token) { token = d.mint; resolved = true; } else if (d.tokenMeta?.mint?.toLowerCase() === token) { token = d.tokenMeta.mint; resolved = true; } }
       } catch {}
     }
-    if (!resolved) return res.status(400).json({ error: 'invalid_address', message: 'Could not resolve lowercase address.', hint: 'Copy the address from DexScreener token page.' });
+
+    // Method 3: DexScreener pair resolve (lowercase URL might be a pair address)
+    if (!resolved) {
+      try {
+        const STABLES = new Set(['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v','Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB','So11111111111111111111111111111111111111112']);
+        const r = await fetchWithRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${token}`, {}, { retries: 1, timeout: 5000 });
+        if (r.ok) {
+          const d = await r.json();
+          const pair = d?.pair || d?.pairs?.[0];
+          if (pair) {
+            const base = pair.baseToken?.address;
+            const quote = pair.quoteToken?.address;
+            if (base && !STABLES.has(base)) { token = base; resolved = true; }
+            else if (quote && !STABLES.has(quote)) { token = quote; resolved = true; }
+          }
+        }
+      } catch {}
+    }
+
+    // Method 4: Jupiter full-text search by entire lowercase address
+    if (!resolved) {
+      try {
+        const r = await fetchWithRetry(`https://api.jup.ag/tokens/v2/search?query=${token}`, {}, { retries: 1, timeout: 5000 });
+        if (r.ok) { const tokens = await r.json(); if (Array.isArray(tokens) && tokens.length > 0) { const m = tokens.find(t => t.id?.toLowerCase() === token); if (m) { token = m.id; resolved = true; } } }
+      } catch {}
+    }
+
+    if (!resolved) return res.status(400).json({ error: 'invalid_address', message: 'Could not resolve address. Try copying the token address directly.', hint: 'DexScreener URLs use lowercase. Copy the address from the token page.' });
   }
 
   // ── Billing ──
