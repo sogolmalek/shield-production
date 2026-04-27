@@ -566,6 +566,8 @@ async function scoreTok(mintAddress) {
     score, verdict, tier: score>=75?'safe':score>=55?'caution':score>=35?'warning':'danger',
     address: mintAddress, name: jup?.name||null, symbol: jup?.symbol||null,
     checks, sources,
+    dataConfidence: dsc >= 3 ? 'high' : dsc === 2 ? 'medium' : 'low',
+    sourcesUsed: dsc,
     details: { mintAuthDisabled: mintAuth, freezeAuthDisabled: freezeAuth, rugcheckRaw: rc?.score??null, organicScore: jup?.organicScore??null, liquidity: jup?.liquidity??null, holderCount: hc, mcap: jup?.mcap??null, verified: jup?.isVerified??null, cexes: jup?.cexes??[], lpLocked: rc?.lockers?.length>0, totalMarketLiquidity: rc?.totalMarketLiquidity??null, insidersDetected: rc?.graphInsidersDetected??null, transferFee: rc?.transferFee??null, rugged: rc?.rugged??false, lpProviders: rc?.totalLPProviders??null, creator: rc?.creator?.address??null },
   };
 
@@ -591,7 +593,24 @@ app.use((err, req, res, next) => {
 // ── Start ──
 const server = app.listen(PORT, () => {
   console.log(`⛨  Worker ${process.pid} on :${PORT}`);
-  setInterval(() => { fetch('https://shield-production-8awh.onrender.com/').then(r=>r.json()).then(()=>console.log('[KEEPALIVE] ok')).catch(()=>{}); }, 840000);
+
+  // Keepalive: ping self every 4 min to prevent Render free tier sleep (14 min idle = sleep)
+  // 4 min gives 3x safety margin
+  setInterval(() => {
+    fetch('https://shield-production-8awh.onrender.com/health')
+      .then(r => r.json())
+      .then(d => console.log(`[KEEPALIVE] ok uptime=${d.uptime}s cache=${d.cacheSize}`))
+      .catch(() => console.log('[KEEPALIVE] failed'));
+  }, 4 * 60 * 1000);
+
+  // Warm up external connections 30s after start — pre-populate circuit breakers
+  setTimeout(async () => {
+    try {
+      await fetch('https://api.jup.ag/tokens/v2/search?query=SOL', { signal: AbortSignal.timeout(5000) });
+      await fetch('https://api.rugcheck.xyz/v1/tokens/So11111111111111111111111111111111111111112/report/summary', { signal: AbortSignal.timeout(5000) });
+      console.log('[WARMUP] External APIs pre-warmed');
+    } catch {}
+  }, 30000);
 });
 server.timeout = 35000;
 server.keepAliveTimeout = 65000;

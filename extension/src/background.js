@@ -73,7 +73,7 @@ chrome.runtime.onInstalled.addListener(() => {
 function warmServer() { fetch(SHIELD_API + '/', { signal: AbortSignal.timeout(5000) }).catch(() => {}); }
 warmServer();
 chrome.runtime.onStartup?.addListener(warmServer);
-chrome.alarms.create('shield-server-warm', { periodInMinutes: 13 });
+chrome.alarms.create('shield-server-warm', { periodInMinutes: 4 });
 
 
 // ═══════════════════════════════════════
@@ -268,7 +268,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           'So11111111111111111111111111111111111111112',     // SOL/WSOL
           '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // stSOL
           'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
-          'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK (skip as quote)
         ]);
 
         const res = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${msg.pairAddress}`, {}, { retries: 2, timeout: 8000 });

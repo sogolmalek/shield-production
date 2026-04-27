@@ -300,6 +300,20 @@ function displayResult(data, addr) {
   if (el('rVd')) { el('rVd').textContent = verdict; el('rVd').style.color = colors[tier]; el('rVd').style.background = bgs[tier]; }
   if (el('rAd')) el('rAd').textContent = addr;
 
+  // Data confidence indicator
+  const conf = data.dataConfidence || (data.sourcesUsed >= 3 ? 'high' : data.sourcesUsed === 2 ? 'medium' : 'low');
+  const confColors = { high: 'rgba(52,211,153,.6)', medium: 'rgba(251,191,36,.6)', low: 'rgba(239,68,68,.6)' };
+  const confLabels = { high: 'High confidence (3-4 sources)', medium: 'Medium confidence (2 sources)', low: 'Low confidence (1 source)' };
+  const confEl = document.getElementById('rConf');
+  if (confEl) { confEl.textContent = confLabels[conf] || ''; confEl.style.color = confColors[conf] || ''; confEl.style.display = 'block'; }
+  else {
+    const c = document.createElement('div');
+    c.id = 'rConf';
+    c.style.cssText = 'font-size:9px;margin-top:4px;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,.02);color:' + (confColors[conf]||'') + ';display:block';
+    c.textContent = confLabels[conf] || '';
+    el('rAd')?.parentElement?.insertBefore(c, el('rAd'));
+  }
+
   if (data.checks && el('rCh')) {
     let html = '';
     for (const c of data.checks) {

@@ -30,12 +30,10 @@
   function validMint(a) {
     if (a.length < 32 || a.length > 44 || SKIP.has(a)) return false;
     if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(a)) return false;
-    // Reject all-uppercase (likely not a real address)
     if (a === a.toUpperCase()) return false;
     return true;
   }
 
-  // ── Extension context validity check ──
   function isContextValid() {
     try { return !!chrome.runtime?.id; } catch { return false; }
   }
@@ -45,6 +43,94 @@
   }
   injectBridge();
 
+
+  // ═══════════════════════════════════════
+  // SCAN QUEUE — max 4 concurrent, prevents API flood on Twitter feed
+  // ═══════════════════════════════════════
+  const scanQueue = [];
+  let activeScanCount = 0;
+  const MAX_CONCURRENT_SCANS = 4;
+
+  function enqueueScan(mint) {
+    if (cache[mint]) return Promise.resolve(cache[mint]);
+    return new Promise(resolve => {
+      scanQueue.push({ mint, resolve });
+      drainQueue();
+    });
+  }
+
+  function drainQueue() {
+    while (activeScanCount < MAX_CONCURRENT_SCANS && scanQueue.length > 0) {
+      const { mint, resolve } = scanQueue.shift();
+      if (cache[mint]) { resolve(cache[mint]); continue; }
+      activeScanCount++;
+      scanDirect(mint).then(r => {
+        activeScanCount--;
+        resolve(r);
+        drainQueue();
+      });
+    }
+  }
+
+  function scanDirect(mint, retryCount = 0) {
+    if (!isContextValid()) return Promise.resolve(null);
+    return new Promise(resolve => {
+      const startTime = Date.now();
+      try {
+        chrome.runtime.sendMessage({ type: 'DO_SCAN', token: mint, fingerprint: fp }, res => {
+          if (chrome.runtime.lastError) {
+            if (retryCount < 1) { setTimeout(() => scanDirect(mint, retryCount + 1).then(resolve), 2000); }
+            else resolve(null);
+            return;
+          }
+          if (!res) { resolve(null); return; }
+          if (res.blocked) { resolve({ score: -1, blocked: true, reason: res.reason, message: res.message, payment: res.payment }); return; }
+          if (res.error === 'server_down' && retryCount < 2) {
+            setTimeout(() => scanDirect(mint, retryCount + 1).then(resolve), (res.retryAfter || 10) * 1000);
+            return;
+          }
+          if (res.error) { resolve(null); return; }
+          if (res.data) {
+            res.data._scanTime = Date.now() - startTime;
+            cache[mint] = res.data;
+            resolve(res.data);
+          } else resolve(null);
+        });
+      } catch { resolve(null); }
+    });
+  }
+
+  // Public scan function uses queue
+  function scan(mint) { return enqueueScan(mint); }
+
+  function resolveTicker(ticker) {
+    if (!isContextValid()) return Promise.resolve(null);
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: 'RESOLVE_TICKER', ticker }, res => {
+          if (chrome.runtime.lastError || !res?.found || !res?.mint) resolve(null);
+          else resolve(res.mint);
+        });
+      } catch { resolve(null); }
+    });
+  }
+
+  function resolveDexPair(pairAddress) {
+    if (!isContextValid()) return Promise.resolve(null);
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: 'RESOLVE_DEXSCREENER', pairAddress }, res => {
+          if (chrome.runtime.lastError || !res) resolve(null);
+          else resolve(res);
+        });
+      } catch { resolve(null); }
+    });
+  }
+
+
+  // ═══════════════════════════════════════
+  // STYLES
+  // ═══════════════════════════════════════
   let stylesInjected = false;
   function ensureStyles() {
     if (stylesInjected) return;
@@ -71,6 +157,10 @@
 .sb-buy{background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);color:#34d399;padding:5px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;animation:shieldFadeIn .3s ease}.sb-buy:hover{background:rgba(52,211,153,.2)}
 .sb-pay{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);color:#fbbf24;padding:5px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s}.sb-pay:hover{background:rgba(251,191,36,.2)}
 .sb-retry{background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.3);color:#a78bfa;padding:5px 14px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s}.sb-retry:hover{background:rgba(139,92,246,.2)}
+.sb-conf{font-size:9px;padding:2px 6px;border-radius:3px;margin-left:4px}
+.sb-conf.high{color:rgba(52,211,153,.7);background:rgba(52,211,153,.1)}
+.sb-conf.medium{color:rgba(251,191,36,.7);background:rgba(251,191,36,.1)}
+.sb-conf.low{color:rgba(239,68,68,.7);background:rgba(239,68,68,.1)}
 .shield-badge{display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle;transition:all .25s ease}
 .shield-badge.scanning{animation:shieldPulse 1.5s ease infinite}
     `.trim();
@@ -79,64 +169,7 @@
 
 
   // ═══════════════════════════════════════
-  // SCAN — with retry awareness
-  // ═══════════════════════════════════════
-  function scan(mint, retryCount = 0) {
-    if (cache[mint]) return Promise.resolve(cache[mint]);
-    if (!isContextValid()) return Promise.resolve(null);
-
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: 'DO_SCAN', token: mint, fingerprint: fp }, res => {
-          if (chrome.runtime.lastError) {
-            console.log('[SHIELD] scan err:', chrome.runtime.lastError.message);
-            // Auto-retry once on context invalidation
-            if (retryCount < 1) { setTimeout(() => scan(mint, retryCount + 1).then(resolve), 2000); }
-            else resolve(null);
-            return;
-          }
-          if (!res) { resolve(null); return; }
-          if (res.blocked) { resolve({ score: -1, blocked: true, reason: res.reason, message: res.message, payment: res.payment }); return; }
-          if (res.error === 'server_down' && retryCount < 2) {
-            // Auto-retry with delay for server restart
-            setTimeout(() => scan(mint, retryCount + 1).then(resolve), (res.retryAfter || 10) * 1000);
-            return;
-          }
-          if (res.error) { resolve(null); return; }
-          if (res.data) { cache[mint] = res.data; resolve(res.data); }
-          else resolve(null);
-        });
-      } catch { resolve(null); }
-    });
-  }
-
-  function resolveTicker(ticker) {
-    if (!isContextValid()) return Promise.resolve(null);
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: 'RESOLVE_TICKER', ticker }, res => {
-          if (chrome.runtime.lastError || !res?.found || !res?.mint) resolve(null);
-          else resolve(res.mint);
-        });
-      } catch { resolve(null); }
-    });
-  }
-
-  function resolveDexPair(pairAddress) {
-    if (!isContextValid()) return Promise.resolve(null);
-    return new Promise(resolve => {
-      try {
-        chrome.runtime.sendMessage({ type: 'RESOLVE_DEXSCREENER', pairAddress }, res => {
-          if (chrome.runtime.lastError || !res) resolve(null);
-          else resolve(res); // Returns { tokenAddress, symbol, name } or { tokenAddress: null, isStablePair: true, ... }
-        });
-      } catch { resolve(null); }
-    });
-  }
-
-
-  // ═══════════════════════════════════════
-  // FLOATING BAR — with loading states + smooth transitions
+  // FLOATING BAR — cold start awareness + data confidence
   // ═══════════════════════════════════════
   function showBar(mint) {
     if (document.getElementById('shield-bar')) return;
@@ -144,8 +177,6 @@
     const bar = document.createElement('div');
     bar.id = 'shield-bar';
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(139,92,246,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
-
-    // Loading state with spinner
     bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score loading"><span class="sb-spinner"></span>Scanning</span><span class="sb-verdict" style="opacity:.5">Analyzing on-chain data\u2026</span>';
 
     const origMargin = document.body?.style?.marginTop || '';
@@ -163,8 +194,14 @@
 
     const startTime = Date.now();
 
+    // Cold start detector — if >5s, show "waking up" message
+    const coldStartTimer = setTimeout(() => {
+      const verdictEl = bar.querySelector('.sb-verdict');
+      if (verdictEl) verdictEl.textContent = 'Server waking up (free tier)\u2026 hang tight';
+    }, 5000);
+
     scan(mint).then(r => {
-      // Ensure minimum display time for loading (prevents flash)
+      clearTimeout(coldStartTimer);
       const elapsed = Date.now() - startTime;
       const delay = Math.max(0, 400 - elapsed);
 
@@ -172,10 +209,7 @@
         if (!r) {
           bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score danger">Error</span><span class="sb-verdict">Could not reach API</span><button class="sb-retry" id="sb-retry-btn">Retry</button>';
           addClose();
-          document.getElementById('sb-retry-btn')?.addEventListener('click', () => {
-            closeBar();
-            setTimeout(() => showBar(mint), 300);
-          });
+          document.getElementById('sb-retry-btn')?.addEventListener('click', () => { closeBar(); setTimeout(() => showBar(mint), 300); });
           return;
         }
         if (r.blocked) {
@@ -192,7 +226,9 @@
         }
         const tier = r.score >= 75 ? 'safe' : r.score >= 55 ? 'caution' : r.score >= 35 ? 'warning' : 'danger';
         const verdict = r.verdict || tier.toUpperCase();
-        bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score ' + tier + '" style="animation:shieldCheckPop .3s ease">' + r.score + '</span><span class="sb-verdict">' + verdict + '</span><span style="font-size:10px;color:rgba(255,255,255,.3)">' + mint.slice(0, 6) + '\u2026' + mint.slice(-4) + '</span>' + (r.score >= 35 ? '<button class="sb-buy" id="sb-buy-btn">\u26A1 Buy Safe via LI.FI</button>' : '<span style="font-size:11px;color:#ef4444;font-weight:600;animation:shieldFadeIn .3s ease">\uD83D\uDED1 Swap Blocked</span>');
+        const conf = r.dataConfidence || (r.sourcesUsed >= 3 ? 'high' : r.sourcesUsed === 2 ? 'medium' : 'low');
+        const confLabel = conf === 'high' ? '4/4 sources' : conf === 'medium' ? '2-3 sources' : '1 source';
+        bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score ' + tier + '" style="animation:shieldCheckPop .3s ease">' + r.score + '</span><span class="sb-verdict">' + verdict + '</span><span class="sb-conf ' + conf + '">' + confLabel + '</span><span style="font-size:10px;color:rgba(255,255,255,.3)">' + mint.slice(0, 6) + '\u2026' + mint.slice(-4) + '</span>' + (r.score >= 35 ? '<button class="sb-buy" id="sb-buy-btn">\u26A1 Buy Safe via LI.FI</button>' : '<span style="font-size:11px;color:#ef4444;font-weight:600;animation:shieldFadeIn .3s ease">\uD83D\uDED1 Swap Blocked</span>');
         addClose();
         document.getElementById('sb-buy-btn')?.addEventListener('click', () => {
           if (typeof globalThis.ShieldLifi !== 'undefined') globalThis.ShieldLifi.createSwapModal(mint, r.score, tier, verdict);
@@ -201,22 +237,17 @@
       }, delay);
     });
 
-    if (isContextValid()) {
-      try { chrome.runtime.sendMessage({ type: 'CHECK_TRIAL' }); } catch {}
-    }
+    if (isContextValid()) { try { chrome.runtime.sendMessage({ type: 'CHECK_TRIAL' }); } catch {} }
   }
 
-
-  // ═══════════════════════════════════════
-  // STABLE PAIR BAR — SOL/USDC, USDT/USDC, etc.
-  // ═══════════════════════════════════════
+  // ── Stablecoin pair bar ──
   function showStablePairBar(base, quote) {
     if (document.getElementById('shield-bar')) return;
     ensureStyles();
     const bar = document.createElement('div');
     bar.id = 'shield-bar';
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(52,211,153,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
-    bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score safe" style="animation:shieldCheckPop .3s ease">\u2713</span><span class="sb-verdict" style="color:#34D399">' + (base || '?') + '/' + (quote || '?') + ' — Known pair, no rug risk</span>';
+    bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score safe" style="animation:shieldCheckPop .3s ease">\u2713</span><span class="sb-verdict" style="color:#34D399">' + (base || '?') + '/' + (quote || '?') + ' \u2014 Known pair, no rug risk</span>';
     const origMargin = document.body?.style?.marginTop || '';
     document.body.prepend(bar);
     if (document.body) document.body.style.marginTop = '48px';
@@ -224,6 +255,11 @@
     b.addEventListener('click', () => { bar.classList.add('closing'); setTimeout(() => { bar.remove(); if (document.body) document.body.style.marginTop = origMargin; }, 250); });
     bar.appendChild(b);
   }
+
+
+  // ═══════════════════════════════════════
+  // URL DETECTION
+  // ═══════════════════════════════════════
   function detectURL() {
     const href = location.href;
     const host = location.hostname;
@@ -233,17 +269,15 @@
       if (m && m[1]) {
         const addr = m[1];
         resolveDexPair(addr).then(res => {
-          if (!res) return;
-          if (res.tokenAddress) {
+          if (res && res.tokenAddress) {
             showBar(res.tokenAddress);
-          } else if (res.isStablePair) {
-            // SOL/USDC or USDT/USDC pair — show safe bar, no scan needed
+          } else if (res && res.isStablePair) {
             showStablePairBar(res.base, res.quote);
-          } else if (/[A-Z]/.test(addr) && /[a-z]/.test(addr)) {
-            showBar(addr);
-          } else if (addr === addr.toLowerCase()) {
+          } else {
+            // Fallback: send to backend which has 4-method resolve
             scan(addr).then(r => {
-              if (r && !r.blocked && r.score >= 0 && r.address) showBar(r.address);
+              if (r && !r.blocked && r.score >= 0) showBar(r.address || addr);
+              else if (r && r.blocked) showBar(addr);
             });
           }
         });
@@ -257,7 +291,7 @@
 
 
   // ═══════════════════════════════════════
-  // INLINE BADGES
+  // INLINE BADGES (non-Twitter)
   // ═══════════════════════════════════════
   const badgedMints = new Set();
   function scanText() {
@@ -292,7 +326,7 @@
 
 
   // ═══════════════════════════════════════
-  // TWITTER/X SCANNING
+  // TWITTER/X — IntersectionObserver + MutationObserver
   // ═══════════════════════════════════════
   const articleMints = new Map();
   const resolvedTickers = new Map();
@@ -304,16 +338,17 @@
     const existing = tt.querySelector('[data-shield-mint="' + mint + '"]');
 
     if (existing && sd) {
-      // UPDATE existing badge with score (was showing "scanning...")
+      // UPDATE existing scanning badge with real score
       const c = COLORS[sd.tier];
       existing.className = 'shield-badge';
       existing.style.cssText = 'background:' + c + '20;color:' + c + ';display:inline-block;font-family:monospace;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;cursor:pointer;vertical-align:middle';
-      existing.textContent = '\u26E8 ' + sd.score; existing.title = 'Shield: ' + sd.score + '/100 \u2014 ' + sd.verdict;
+      existing.textContent = '\u26E8 ' + sd.score;
+      existing.title = 'Shield: ' + sd.score + '/100 \u2014 ' + sd.verdict;
       existing.onclick = null;
       existing.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); showBar(mint); });
       return;
     }
-    if (existing) return; // Already has a scanning badge, don't duplicate
+    if (existing) return;
 
     const b = document.createElement('span');
     b.setAttribute('data-shield-mint', mint);
@@ -333,12 +368,12 @@
   function scanAndBadge(article, mintMap, mint) {
     if (mintMap.has(mint)) return;
     mintMap.set(mint, null);
-    injectTweetBadge(article, mint, null); // Shows "scanning..." badge
+    injectTweetBadge(article, mint, null);
     scan(mint).then(r => {
       if (!r || r.blocked) { mintMap.delete(mint); return; }
       const sd = { score: r.score, tier: tierOf(r), verdict: r.verdict || tierOf(r).toUpperCase() };
       mintMap.set(mint, sd);
-      injectTweetBadge(article, mint, sd); // Updates badge with score
+      injectTweetBadge(article, mint, sd);
     }).catch(() => mintMap.delete(mint));
   }
 
@@ -348,9 +383,11 @@
     const mintMap = articleMints.get(article);
     const text = article.textContent || '';
 
+    // Raw addresses
     const addrMatches = text.match(SOLANA_RE);
     if (addrMatches) addrMatches.forEach(m => { if (validMint(m)) scanAndBadge(article, mintMap, m); });
 
+    // Cashtags (max 3 per tweet)
     const tickers = [];
     article.querySelectorAll('a[href]').forEach(link => {
       const m = (link.href || '').match(/[?&]q=%24([A-Za-z]{2,10})/);
@@ -380,6 +417,7 @@
     });
   }
 
+  // ── Heartbeat: re-inject badges Twitter removes ──
   function startHeartbeat() {
     setInterval(() => {
       for (const [article, mintMap] of articleMints) {
@@ -393,15 +431,38 @@
     }, 2000);
   }
 
+  // ── MutationObserver: catch new articles added to DOM ──
   let mutationDebounce = null;
   function startMutationObserver() {
     const observer = new MutationObserver(() => {
       clearTimeout(mutationDebounce);
-      mutationDebounce = setTimeout(() => {
-        document.querySelectorAll('article').forEach(a => { if (!articleMints.has(a)) scanArticle(a); });
-      }, 500);
+      mutationDebounce = setTimeout(scanVisibleArticles, 300);
     });
     observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // ── IntersectionObserver: only scan articles visible on screen ──
+  let intersectionObserver = null;
+  function startIntersectionObserver() {
+    if (!('IntersectionObserver' in window)) return; // Fallback to mutation-only
+    intersectionObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && entry.target.tagName === 'ARTICLE') {
+          if (!articleMints.has(entry.target)) scanArticle(entry.target);
+        }
+      });
+    }, { rootMargin: '200px' }); // Pre-scan 200px before visible
+  }
+
+  function scanVisibleArticles() {
+    document.querySelectorAll('article').forEach(a => {
+      if (articleMints.has(a)) return;
+      if (intersectionObserver) {
+        intersectionObserver.observe(a); // Will fire when visible
+      } else {
+        scanArticle(a); // Fallback: scan immediately
+      }
+    });
   }
 
 
@@ -418,7 +479,7 @@
       };
       window.addEventListener('message', handler);
       window.postMessage({ type: 'SHIELD_REQ_CONNECT' }, '*');
-      setTimeout(() => { window.removeEventListener('message', handler); sendResponse({ error: 'Phantom connection timed out. Make sure Phantom is installed and unlocked.' }); }, 15000);
+      setTimeout(() => { window.removeEventListener('message', handler); sendResponse({ error: 'Phantom connection timed out.' }); }, 15000);
       return true;
     }
     if (msg.type === 'SHIELD_STORE_WALLET') { try { localStorage.setItem('shield_wallet', msg.address); } catch {} sendResponse({ ok: true }); }
@@ -432,10 +493,12 @@
   function start() {
     console.log('[SHIELD] \u26E8 Active on', location.hostname);
     ensureStyles();
+    startIntersectionObserver();
     setTimeout(detectURL, 1500);
     setTimeout(scanText, 3500);
     startMutationObserver();
     startHeartbeat();
+
     let lastURL = location.href;
     setInterval(() => {
       if (location.href !== lastURL) {
