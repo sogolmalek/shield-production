@@ -139,12 +139,24 @@ function depositPayload(amount = 5) {
 }
 
 // ── Routes ──
-app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.2.0', worker: process.pid }));
+app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.3.0', worker: process.pid }));
 
 // ── SCAN ──
 app.post('/api/scan', scanLimiter, async (req, res) => {
-  const { token, wallet, fingerprint } = req.body;
+  let { token, wallet, fingerprint } = req.body;
   if (!token) return res.status(400).json({ error: 'token_required' });
+
+  // Fix lowercase addresses (DexScreener lowercases URLs)
+  if (token === token.toLowerCase() && token.length >= 32) {
+    try {
+      const jupRes = await fetch(`https://api.jup.ag/tokens/v2/search?query=${token}`, { signal: AbortSignal.timeout(5000) });
+      if (jupRes.ok) {
+        const tokens = await jupRes.json();
+        const match = Array.isArray(tokens) && tokens.find(t => t.id && t.id.toLowerCase() === token);
+        if (match) token = match.id;
+      }
+    } catch {}
+  }
 
   let billingType    = 'free_trial';
   let billingInfo    = {};

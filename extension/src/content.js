@@ -32,11 +32,14 @@
 
   function valid(a) {
     if (a.length < 32 || a.length > 44 || SKIP.has(a)) return false;
-    // Solana base58 addresses MUST have mixed case — reject all lowercase or all uppercase
-    if (a === a.toLowerCase() || a === a.toUpperCase()) return false;
-    // Must match base58 charset
-    if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(a)) return false;
+    // Must match base58 charset (case-insensitive — server will fix case)
+    if (!/^[1-9A-HJ-NP-Za-km-z]+$/i.test(a)) return false;
     return true;
+  }
+
+  // Check if address has proper mixed case (real base58)
+  function isProperCase(a) {
+    return a !== a.toLowerCase() && a !== a.toUpperCase();
   }
 
   // Inject bridge for Phantom access
@@ -233,12 +236,12 @@
     const found = new Set();
     while (walker.nextNode()) {
       const matches = walker.currentNode.textContent.match(SOLANA_RE);
-      if (matches) matches.forEach(m => { if (valid(m)) found.add(m); });
+      if (matches) matches.forEach(m => { if (valid(m) && isProperCase(m)) found.add(m); });
     }
 
     // Also extract tokens from all link hrefs on the page (catches t.co shortened links on Twitter)
     const linkMints = extractMintsFromLinks(document.body);
-    linkMints.forEach(m => found.add(m));
+    linkMints.forEach(m => { if (isProperCase(m)) found.add(m); });
 
     found.forEach(mint => {
       if (badgedMints.has(mint)) return;
