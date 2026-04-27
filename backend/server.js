@@ -139,7 +139,7 @@ function depositPayload(amount = 5) {
 }
 
 // ── Routes ──
-app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.2.0', worker: process.pid }));
+app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.3.0', worker: process.pid }));
 
 // ── SCAN ──
 app.post('/api/scan', scanLimiter, async (req, res) => {
@@ -252,7 +252,7 @@ app.get('/api/credits/:wallet', (req, res) => res.json(credits.getBalance(req.pa
 
 // ── TICKER RESOLUTION — $TICKER → mint address via Jupiter ──
 const tickerCache = new Map();
-const TICKER_CACHE_TTL = 10 * 60 * 1000; // 10 min
+const TICKER_CACHE_TTL = 5 * 60 * 1000; // 5 min
 
 app.get('/api/resolve/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase().replace(/^\$/, '');
@@ -281,9 +281,21 @@ app.get('/api/resolve/:ticker', async (req, res) => {
       return res.json({ found: false, ticker, mint: null });
     }
 
-    // Find exact symbol match first, then fall back to first result
-    const exact = tokens.find(t => t.symbol?.toUpperCase() === ticker);
-    const best = exact || tokens[0];
+    // Find best match: prefer verified > highest organic score > highest liquidity > exact symbol match
+    const exactMatches = tokens.filter(t => t.symbol?.toUpperCase() === ticker);
+    const candidates = exactMatches.length > 0 ? exactMatches : tokens;
+
+    // Sort: verified first, then by organic score, then liquidity
+    candidates.sort((a, b) => {
+      if (a.isVerified && !b.isVerified) return -1;
+      if (!a.isVerified && b.isVerified) return 1;
+      const orgA = a.organicScore || 0;
+      const orgB = b.organicScore || 0;
+      if (orgA !== orgB) return orgB - orgA;
+      return (b.liquidity || 0) - (a.liquidity || 0);
+    });
+
+    const best = candidates[0];
 
     const data = {
       found: true,
