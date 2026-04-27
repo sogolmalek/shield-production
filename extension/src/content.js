@@ -225,21 +225,28 @@
       });
     }
 
-    // 3. Resolve tickers
+    // 3. Resolve tickers — send directly to scan endpoint, server resolves
     tickers.forEach(ticker => {
       const key = '$' + ticker;
       if (mintMap.has(key)) return;
       mintMap.set(key, 'resolving');
 
+      // Check local cache
       const cached = resolvedTickers.get(ticker);
       if (cached) { mintMap.delete(key); scanAndBadge(article, mintMap, cached); return; }
 
-      resolveTicker(ticker).then(mint => {
+      // Send ticker to background to resolve + scan in one step
+      chrome.runtime.sendMessage({ type: 'RESOLVE_AND_SCAN', ticker, fingerprint: fp }, res => {
         mintMap.delete(key);
-        if (!mint) return;
+        if (chrome.runtime.lastError || !res || !res.mint || !res.data) return;
+        const mint = res.mint;
         resolvedTickers.set(ticker, mint);
-        scanAndBadge(article, mintMap, mint);
-      }).catch(() => mintMap.delete(key));
+        cache[mint] = res.data;
+        const r = res.data;
+        const sd = { score: r.score, tier: tierOf(r), verdict: r.verdict || tierOf(r).toUpperCase() };
+        mintMap.set(mint, sd);
+        injectTweetBadge(article, mint, sd);  // inject WITH score, no "scanning" state
+      });
     });
   }
 

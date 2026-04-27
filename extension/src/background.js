@@ -205,6 +205,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── RESOLVE_AND_SCAN — resolve $TICKER + scan in one call (for Twitter) ──
+  if (msg.type === 'RESOLVE_AND_SCAN') {
+    (async () => {
+      try {
+        const ticker = (msg.ticker || '').toUpperCase().replace(/^\$/, '');
+        if (!ticker) { sendResponse({ mint: null }); return; }
+        const resolveRes = await fetch(`${SHIELD_API}/api/resolve/${encodeURIComponent(ticker)}`, { signal: AbortSignal.timeout(6000) });
+        const resolveData = await resolveRes.json();
+        if (!resolveData.found || !resolveData.mint) { sendResponse({ mint: null }); return; }
+        const mint = resolveData.mint;
+        const d = await chrome.storage.local.get(['shieldWalletAddr', 'shieldWalletConnected']);
+        const wallet = d.shieldWalletConnected ? d.shieldWalletAddr : null;
+        const fp = msg.fingerprint || 'ticker_' + Date.now();
+        const scanRes = await fetch(`${SHIELD_API}/api/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: mint, wallet, fingerprint: fp }),
+        });
+        if (!scanRes.ok) { sendResponse({ mint, data: null }); return; }
+        const scanData = await scanRes.json();
+        sendResponse({ mint, data: scanData });
+      } catch (e) {
+        console.error('[SHIELD] Resolve+scan error:', e.message);
+        sendResponse({ mint: null });
+      }
+    })();
+    return true;
+  }
+
   // ── TRIAL_ENDED notification ──
   if (msg.type === 'CHECK_TRIAL') {
     (async () => {
