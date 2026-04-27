@@ -258,43 +258,78 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── RESOLVE_DEXSCREENER — stablecoin-aware pair→token resolve ──
+  // ── RESOLVE_DEXSCREENER — try both pair API and token-pairs API ──
   if (msg.type === 'RESOLVE_DEXSCREENER') {
     (async () => {
       try {
         const STABLES = new Set([
-          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
-          'So11111111111111111111111111111111111111112',     // SOL/WSOL
-          '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // stSOL
-          'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
+          'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+          'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+          'So11111111111111111111111111111111111111112',
+          '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
+          'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
         ]);
 
-        const res = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${msg.pairAddress}`, {}, { retries: 2, timeout: 8000 });
-        if (!res.ok) { sendResponse({ tokenAddress: null }); return; }
-        const data = await res.json();
-        const pair = data?.pair || data?.pairs?.[0];
-        if (!pair) { sendResponse({ tokenAddress: null }); return; }
+        const addr = msg.pairAddress;
+        let tokenAddr = null, tokenSymbol = null, tokenName = null, isStablePair = false, baseSymbol = null, quoteSymbol = null;
 
-        const base  = pair.baseToken;
-        const quote = pair.quoteToken;
+        // Method 1: /latest/dex/pairs/ (pair address lookup)
+        try {
+          const res = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${addr}`, {}, { retries: 1, timeout: 6000 });
+          if (res.ok) {
+            const data = await res.json();
+            const pair = data?.pair || (data?.pairs && data.pairs[0]) || null;
+            console.log('[SHIELD] DexScreener pairs API:', pair ? `${pair.baseToken?.symbol}/${pair.quoteToken?.symbol}` : 'no pair');
+            if (pair?.baseToken && pair?.quoteToken) {
+              const base = pair.baseToken;
+              const quote = pair.quoteToken;
+              baseSymbol = base.symbol; quoteSymbol = quote.symbol;
+              if (base.address && !STABLES.has(base.address)) {
+                tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
+              } else if (quote.address && !STABLES.has(quote.address)) {
+                tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
+              } else {
+                isStablePair = true;
+              }
+            }
+          }
+        } catch (e) { console.log('[SHIELD] DexScreener pairs API error:', e.message); }
 
-        // If baseToken is a stablecoin/SOL, the interesting token is quoteToken
-        // If quoteToken is a stablecoin/SOL, the interesting token is baseToken
-        let tokenAddr, tokenSymbol, tokenName;
-        if (base?.address && !STABLES.has(base.address)) {
-          tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
-        } else if (quote?.address && !STABLES.has(quote.address)) {
-          tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
-        } else {
-          // Both are stablecoins/SOL — this is a stable pair like SOL/USDC
-          sendResponse({ tokenAddress: null, isStablePair: true, base: base?.symbol, quote: quote?.symbol });
-          return;
+        // Method 2: /token-pairs/v1/ (token address lookup — handles case where URL is token address not pair)
+        if (!tokenAddr && !isStablePair) {
+          try {
+            const res2 = await fetchRetry(`https://api.dexscreener.com/token-pairs/v1/solana/${addr}`, {}, { retries: 1, timeout: 6000 });
+            if (res2.ok) {
+              const pairs = await res2.json();
+              console.log('[SHIELD] DexScreener token-pairs API:', Array.isArray(pairs) ? pairs.length + ' pairs' : 'not array');
+              const pairList = Array.isArray(pairs) ? pairs : [];
+              if (pairList.length > 0) {
+                // Find the pair with highest liquidity
+                const sorted = pairList.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+                const best = sorted[0];
+                if (best?.baseToken && best?.quoteToken) {
+                  const base = best.baseToken;
+                  const quote = best.quoteToken;
+                  if (base.address && !STABLES.has(base.address)) {
+                    tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
+                  } else if (quote.address && !STABLES.has(quote.address)) {
+                    tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
+                  }
+                }
+              }
+            }
+          } catch (e) { console.log('[SHIELD] DexScreener token-pairs API error:', e.message); }
         }
 
-        sendResponse(tokenAddr
-          ? { tokenAddress: tokenAddr, symbol: tokenSymbol, name: tokenName }
-          : { tokenAddress: null });
+        if (isStablePair) {
+          sendResponse({ tokenAddress: null, isStablePair: true, base: baseSymbol, quote: quoteSymbol });
+        } else if (tokenAddr) {
+          console.log('[SHIELD] DexScreener resolved:', tokenAddr, tokenSymbol);
+          sendResponse({ tokenAddress: tokenAddr, symbol: tokenSymbol, name: tokenName });
+        } else {
+          console.log('[SHIELD] DexScreener: could not resolve', addr);
+          sendResponse({ tokenAddress: null });
+        }
       } catch (e) {
         console.error('[SHIELD] DexScreener error:', e.message);
         sendResponse({ tokenAddress: null });
