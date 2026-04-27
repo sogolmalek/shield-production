@@ -139,7 +139,7 @@ function depositPayload(amount = 5) {
 }
 
 // ── Routes ──
-app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.3.0', worker: process.pid }));
+app.get('/', (req, res) => res.json({ status: 'live', service: 'Shield API', version: '2.2.0', worker: process.pid }));
 
 // ── SCAN ──
 app.post('/api/scan', scanLimiter, async (req, res) => {
@@ -463,7 +463,11 @@ async function scoreTok(mintAddress) {
         if (!honeypotDone) { score -= 35; hardCap = Math.min(hardCap, 10); honeypotDone = true; }
         checks.push({ name: 'Honeypot', pass: false, value: 'DETECTED — do not buy', weight: 'critical', source: 'rugcheck' });
       } else if (isBad) {
-        score -= 6;
+        // Reduce penalty for low-risk flags on established/verified tokens
+        const isLowRisk = name.toLowerCase().includes('mutable') || name.toLowerCase().includes('metadata');
+        const isEstablished = jup?.isVerified || (jup?.holderCount || 0) > 5000;
+        const penalty = (isLowRisk && isEstablished) ? 2 : 6;
+        score -= penalty;
         checks.push({ name, pass: false, value: risk.description || risk.level, weight: 'low', source: 'rugcheck' });
       }
     }
@@ -479,9 +483,14 @@ async function scoreTok(mintAddress) {
     checks.push({ name: 'LP Locked', pass: true, value: `${rc.lockers.length} locker(s) detected ✓`, weight: 'high', source: 'rugcheck' });
     score += 3;
   } else if (rc?.markets && rc.markets.length > 0) {
-    // Has markets but no lockers = LP not locked
-    score -= 12; hardCap = Math.min(hardCap, 55);
-    checks.push({ name: 'LP Locked', pass: false, value: 'NOT LOCKED — LP can be pulled', weight: 'high', source: 'rugcheck' });
+    // Don't penalize verified tokens with deep liquidity or CEX listings — LP lock is less relevant for them
+    const isEstablished = (jup?.isVerified && (jup?.liquidity || 0) > 100000) || (jup?.cexes?.length > 0);
+    if (isEstablished) {
+      checks.push({ name: 'LP Locked', pass: true, value: 'Not locked (established token — low risk)', weight: 'low', source: 'rugcheck' });
+    } else {
+      score -= 12; hardCap = Math.min(hardCap, 55);
+      checks.push({ name: 'LP Locked', pass: false, value: 'NOT LOCKED — LP can be pulled', weight: 'high', source: 'rugcheck' });
+    }
   }
 
   // ═══════════════════════════════════════
@@ -526,8 +535,8 @@ async function scoreTok(mintAddress) {
   // ═══════════════════════════════════════
   // 16. TRANSFER FEE / HIDDEN TAX
   // ═══════════════════════════════════════
-  if (rc?.transferFee != null && rc.transferFee > 0) {
-    const feePct = rc.transferFee;
+  const feePct = typeof rc?.transferFee === 'object' ? (rc.transferFee.pct || 0) : (rc?.transferFee || 0);
+  if (feePct > 0) {
     if (feePct > 10) {
       score -= 20; hardCap = Math.min(hardCap, 30);
       checks.push({ name: 'Transfer Fee', pass: false, value: `${feePct}% — EXTREME hidden tax`, weight: 'critical', source: 'rugcheck' });
