@@ -304,93 +304,308 @@ app.get('/api/pricing', (req, res) => {
   });
 });
 
-// ── SCORING ENGINE ──
+// ── SCORING ENGINE v3 — Production Grade ──
+// Sources: Jupiter Token API V2, RugCheck, Solana RPC, GoldRush
+// 12 checks, weighted scoring, hard caps for critical failures
+
 async function scoreTok(mintAddress) {
   const cached = scanCache.get(mintAddress);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) return cached.result;
 
-  const [rcRes, rpcRes, grRes] = await Promise.allSettled([
-    fetch(`${RUGCHECK_API}/tokens/${mintAddress}/report/summary`, { signal: AbortSignal.timeout(8000) })
+  // Parallel fetch from 4 sources
+  const [rcRes, rpcRes, grRes, jupRes] = await Promise.allSettled([
+    fetch(`${RUGCHECK_API}/tokens/${mintAddress}/report`, { signal: AbortSignal.timeout(10000) })
       .then(r => (r.ok ? r.json() : null)),
     getRPCData(mintAddress),
     goldRush ? goldRush.getTokenHolders(mintAddress).catch(() => null) : Promise.resolve(null),
+    fetch(`https://api.jup.ag/tokens/v2/search?query=${mintAddress}`, { signal: AbortSignal.timeout(8000) })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null),
   ]);
 
   const rc      = rcRes.status  === 'fulfilled' ? rcRes.value  : null;
   const rpc     = rpcRes.status === 'fulfilled' ? rpcRes.value : {};
   const holders = grRes.status  === 'fulfilled' ? grRes.value  : null;
+  const jupTokens = jupRes.status === 'fulfilled' ? jupRes.value : null;
+  const jup     = Array.isArray(jupTokens) ? jupTokens.find(t => t.id === mintAddress) : null;
 
   let score   = 100;
   let hardCap = 100;
   const checks = [];
+  const sources = { rugcheck: !!rc, rpc: !!rpc.supply, jupiter: !!jup, goldrush: !!holders };
 
-  // 1. RugCheck (primary — up to −60 pts)
+  // ═══════════════════════════════════════
+  // 1. RUGCHECK RISK SCORE (primary — up to −60)
+  // ═══════════════════════════════════════
   if (rc && rc.score != null) {
-    score -= Math.min(60, Math.floor(rc.score / 33));
-    const lbl = rc.score < 100 ? 'Clean' : rc.score < 500 ? 'Caution' : rc.score < 2000 ? 'High Risk' : 'Extreme Risk';
-    checks.push(['RugCheck', rc.score < 500, `${lbl} (${rc.score})`]);
+    const penalty = rc.score < 100 ? 0 : rc.score < 300 ? 10 : rc.score < 700 ? 25 : rc.score < 2000 ? 40 : 60;
+    score -= penalty;
+    const lbl = rc.score < 100 ? 'Clean' : rc.score < 300 ? 'Low Risk' : rc.score < 700 ? 'Moderate Risk' : rc.score < 2000 ? 'High Risk' : 'Extreme Risk';
+    checks.push({ name: 'RugCheck Score', pass: rc.score < 700, value: `${lbl} (${rc.score})`, weight: 'high', source: 'rugcheck' });
   } else {
-    score -= 30;
-    checks.push(['RugCheck', false, 'Unavailable (−30)']);
+    score -= 15;
+    checks.push({ name: 'RugCheck Score', pass: false, value: 'Unavailable', weight: 'high', source: 'rugcheck' });
   }
 
-  // 2. Mint Authority — Active → −20 + cap 60 | Unknown (RPC down) → −10
-  const mintAuth = rpc.mintAuthority ?? null;
-  if      (mintAuth === true) { score -= 20; hardCap = Math.min(hardCap, 60); checks.push(['Mint Authority', false, 'Active — can mint']); }
-  else if (mintAuth === null) { score -= 10;                                  checks.push(['Mint Authority', false, 'Unknown (RPC failed)']); }
-  else                                                                         checks.push(['Mint Authority', true,  'Revoked ✓']);
-
-  // 3. Freeze Authority — Active → −15 + cap 65 | Unknown → −5
-  const freezeAuth = rpc.freezeAuthority ?? null;
-  if      (freezeAuth === true) { score -= 15; hardCap = Math.min(hardCap, 65); checks.push(['Freeze Authority', false, 'Active — can freeze']); }
-  else if (freezeAuth === null) { score -= 5;                                   checks.push(['Freeze Authority', false, 'Unknown (RPC failed)']); }
-  else                                                                           checks.push(['Freeze Authority', true,  'Revoked ✓']);
-
-  // All APIs down → cap at WARNING, never SECURE with zero data
-  if (rc === null && mintAuth === null && freezeAuth === null) hardCap = Math.min(hardCap, 45);
-
-  // 4. Supply (informational)
-  if (rpc.supply != null && rpc.decimals != null) {
-    const n = parseFloat(rpc.supply) / Math.pow(10, rpc.decimals);
-    const lbl = n > 1e12 ? (n/1e12).toFixed(1)+'T' : n > 1e9 ? (n/1e9).toFixed(1)+'B' : n > 1e6 ? (n/1e6).toFixed(1)+'M' : n.toLocaleString();
-    checks.push(['Supply', true, lbl]);
+  // ═══════════════════════════════════════
+  // 2. MINT AUTHORITY (critical — hard cap)
+  // ═══════════════════════════════════════
+  const mintAuth = jup?.audit?.mintAuthorityDisabled ?? (rpc.mintAuthority === false ? true : rpc.mintAuthority === true ? false : null);
+  if (mintAuth === false) {
+    score -= 20; hardCap = Math.min(hardCap, 55);
+    checks.push({ name: 'Mint Authority', pass: false, value: 'ACTIVE — team can print tokens', weight: 'critical', source: jup ? 'jupiter' : 'rpc' });
+  } else if (mintAuth === true) {
+    checks.push({ name: 'Mint Authority', pass: true, value: 'Disabled ✓', weight: 'critical', source: jup ? 'jupiter' : 'rpc' });
+  } else {
+    score -= 8;
+    checks.push({ name: 'Mint Authority', pass: false, value: 'Unknown', weight: 'critical', source: 'none' });
   }
 
-  // 5. Top holder — >50% → −25 + cap 55 | >25% → −10
-  if (holders && holders.length > 0) {
-    const topPct = holders[0]?.balance_percentage || 0;
-    if      (topPct > 50) { score -= 25; hardCap = Math.min(hardCap, 55); checks.push(['Top Holder', false, `${topPct.toFixed(1)}% — whale alert`]); }
-    else if (topPct > 25) { score -= 10;                                   checks.push(['Top Holder', false, `${topPct.toFixed(1)}% — concentrated`]); }
-    else                                                                    checks.push(['Top Holder', true,  `${topPct.toFixed(1)}%`]);
+  // ═══════════════════════════════════════
+  // 3. FREEZE AUTHORITY (critical — hard cap)
+  // ═══════════════════════════════════════
+  const freezeAuth = jup?.audit?.freezeAuthorityDisabled ?? (rpc.freezeAuthority === false ? true : rpc.freezeAuthority === true ? false : null);
+  if (freezeAuth === false) {
+    score -= 15; hardCap = Math.min(hardCap, 60);
+    checks.push({ name: 'Freeze Authority', pass: false, value: 'ACTIVE — can freeze wallets', weight: 'critical', source: jup ? 'jupiter' : 'rpc' });
+  } else if (freezeAuth === true) {
+    checks.push({ name: 'Freeze Authority', pass: true, value: 'Disabled ✓', weight: 'critical', source: jup ? 'jupiter' : 'rpc' });
+  } else {
+    score -= 5;
+    checks.push({ name: 'Freeze Authority', pass: false, value: 'Unknown', weight: 'critical', source: 'none' });
   }
 
-  // 6. RugCheck risk flags — honeypot → −30 + cap 15 | danger → −8
+  // ═══════════════════════════════════════
+  // 4. JUPITER ORGANIC SCORE (trust signal)
+  // ═══════════════════════════════════════
+  if (jup && jup.organicScore != null) {
+    const org = jup.organicScore;
+    if (org >= 80)      { score += 5;  checks.push({ name: 'Organic Score', pass: true,  value: `${org.toFixed(0)}/100 — High`, weight: 'medium', source: 'jupiter' }); }
+    else if (org >= 50) {              checks.push({ name: 'Organic Score', pass: true,  value: `${org.toFixed(0)}/100 — Moderate`, weight: 'medium', source: 'jupiter' }); }
+    else if (org >= 20) { score -= 10; checks.push({ name: 'Organic Score', pass: false, value: `${org.toFixed(0)}/100 — Low`, weight: 'medium', source: 'jupiter' }); }
+    else                { score -= 20; hardCap = Math.min(hardCap, 50); checks.push({ name: 'Organic Score', pass: false, value: `${org.toFixed(0)}/100 — Very Low (likely bot activity)`, weight: 'medium', source: 'jupiter' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 5. JUPITER VERIFICATION STATUS
+  // ═══════════════════════════════════════
+  if (jup) {
+    const verified = jup.isVerified || false;
+    const tags = jup.tags || [];
+    const isStrict = tags.includes('strict');
+    if (verified && isStrict) { score += 5; checks.push({ name: 'Jupiter Verified', pass: true, value: 'Verified + Strict ✓', weight: 'medium', source: 'jupiter' }); }
+    else if (verified)        {             checks.push({ name: 'Jupiter Verified', pass: true, value: 'Verified ✓', weight: 'medium', source: 'jupiter' }); }
+    else                      { score -= 5; checks.push({ name: 'Jupiter Verified', pass: false, value: 'Not verified', weight: 'low', source: 'jupiter' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 6. LIQUIDITY DEPTH
+  // ═══════════════════════════════════════
+  if (jup && jup.liquidity != null) {
+    const liq = jup.liquidity;
+    if (liq >= 500000)     { score += 3; checks.push({ name: 'Liquidity', pass: true,  value: `$${(liq/1e6).toFixed(2)}M — Deep`, weight: 'medium', source: 'jupiter' }); }
+    else if (liq >= 50000) {             checks.push({ name: 'Liquidity', pass: true,  value: `$${(liq/1e3).toFixed(0)}K — Adequate`, weight: 'medium', source: 'jupiter' }); }
+    else if (liq >= 5000)  { score -= 8; checks.push({ name: 'Liquidity', pass: false, value: `$${(liq/1e3).toFixed(1)}K — Thin`, weight: 'medium', source: 'jupiter' }); }
+    else                   { score -= 15; hardCap = Math.min(hardCap, 45); checks.push({ name: 'Liquidity', pass: false, value: `$${liq.toFixed(0)} — Dangerously low`, weight: 'high', source: 'jupiter' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 7. TOKEN AGE
+  // ═══════════════════════════════════════
+  if (jup?.firstPool?.createdAt) {
+    const ageMs = Date.now() - new Date(jup.firstPool.createdAt).getTime();
+    const ageDays = ageMs / (24 * 60 * 60 * 1000);
+    if (ageDays >= 180)    { score += 3; checks.push({ name: 'Token Age', pass: true,  value: `${Math.floor(ageDays/30)} months — Established`, weight: 'low', source: 'jupiter' }); }
+    else if (ageDays >= 30){             checks.push({ name: 'Token Age', pass: true,  value: `${Math.floor(ageDays)} days`, weight: 'low', source: 'jupiter' }); }
+    else if (ageDays >= 3) { score -= 5; checks.push({ name: 'Token Age', pass: false, value: `${Math.floor(ageDays)} days — New`, weight: 'low', source: 'jupiter' }); }
+    else                   { score -= 12; checks.push({ name: 'Token Age', pass: false, value: `${Math.floor(ageDays * 24)} hours — Very new`, weight: 'medium', source: 'jupiter' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 8. HOLDER COUNT
+  // ═══════════════════════════════════════
+  const holderCount = jup?.holderCount || null;
+  if (holderCount != null) {
+    if (holderCount >= 10000)    { score += 3; checks.push({ name: 'Holders', pass: true,  value: `${(holderCount/1e3).toFixed(1)}K — Strong community`, weight: 'medium', source: 'jupiter' }); }
+    else if (holderCount >= 1000){             checks.push({ name: 'Holders', pass: true,  value: `${(holderCount/1e3).toFixed(1)}K`, weight: 'low', source: 'jupiter' }); }
+    else if (holderCount >= 100) { score -= 5; checks.push({ name: 'Holders', pass: false, value: `${holderCount} — Small`, weight: 'low', source: 'jupiter' }); }
+    else                         { score -= 10; checks.push({ name: 'Holders', pass: false, value: `${holderCount} — Very few`, weight: 'medium', source: 'jupiter' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 9. TOP HOLDER CONCENTRATION
+  // ═══════════════════════════════════════
+  const topPct = jup?.audit?.topHoldersPercentage ?? (holders?.[0]?.balance_percentage || null);
+  if (topPct != null) {
+    if (topPct > 50)      { score -= 25; hardCap = Math.min(hardCap, 50); checks.push({ name: 'Top Holder %', pass: false, value: `${topPct.toFixed(1)}% — Whale dominance`, weight: 'high', source: jup ? 'jupiter' : 'goldrush' }); }
+    else if (topPct > 25) { score -= 10; checks.push({ name: 'Top Holder %', pass: false, value: `${topPct.toFixed(1)}% — Concentrated`, weight: 'medium', source: jup ? 'jupiter' : 'goldrush' }); }
+    else if (topPct > 10) {              checks.push({ name: 'Top Holder %', pass: true,  value: `${topPct.toFixed(1)}%`, weight: 'low', source: jup ? 'jupiter' : 'goldrush' }); }
+    else                  { score += 3;  checks.push({ name: 'Top Holder %', pass: true,  value: `${topPct.toFixed(1)}% — Well distributed`, weight: 'low', source: jup ? 'jupiter' : 'goldrush' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 10. CEX LISTINGS
+  // ═══════════════════════════════════════
+  if (jup?.cexes && jup.cexes.length > 0) {
+    score += Math.min(5, jup.cexes.length);
+    checks.push({ name: 'CEX Listed', pass: true, value: `${jup.cexes.join(', ')}`, weight: 'medium', source: 'jupiter' });
+  }
+
+  // ═══════════════════════════════════════
+  // 11. HONEYPOT DETECTION (RugCheck flags)
+  // ═══════════════════════════════════════
   if (rc && rc.risks && rc.risks.length > 0) {
     let honeypotDone = false;
-    for (const risk of rc.risks.slice(0, 5)) {
-      const name  = risk.name || 'Risk';
+    for (const risk of rc.risks.slice(0, 6)) {
+      const name = risk.name || 'Risk';
       const isBad = ['danger', 'error', 'warn'].includes(risk.level);
       if (name.toLowerCase().includes('honeypot')) {
-        if (!honeypotDone) { score -= 30; hardCap = Math.min(hardCap, 15); honeypotDone = true; }
-        checks.push(['Honeypot', false, 'DETECTED — do not buy']);
-      } else {
-        if (isBad) score -= 8;
-        checks.push([name, !isBad, risk.description || risk.level]);
+        if (!honeypotDone) { score -= 35; hardCap = Math.min(hardCap, 10); honeypotDone = true; }
+        checks.push({ name: 'Honeypot', pass: false, value: 'DETECTED — do not buy', weight: 'critical', source: 'rugcheck' });
+      } else if (isBad) {
+        score -= 6;
+        checks.push({ name, pass: false, value: risk.description || risk.level, weight: 'low', source: 'rugcheck' });
       }
     }
-    if (!honeypotDone) checks.push(['Honeypot', true, 'Not detected']);
+    if (!honeypotDone) checks.push({ name: 'Honeypot', pass: true, value: 'Not detected', weight: 'high', source: 'rugcheck' });
   } else if (rc) {
-    checks.push(['Honeypot', true, 'Not detected']);
+    checks.push({ name: 'Honeypot', pass: true, value: 'Not detected', weight: 'high', source: 'rugcheck' });
   }
 
+  // ═══════════════════════════════════════
+  // 12. LP LOCK STATUS (RugCheck full report)
+  // ═══════════════════════════════════════
+  if (rc?.lockers && rc.lockers.length > 0) {
+    checks.push({ name: 'LP Locked', pass: true, value: `${rc.lockers.length} locker(s) detected ✓`, weight: 'high', source: 'rugcheck' });
+    score += 3;
+  } else if (rc?.markets && rc.markets.length > 0) {
+    // Has markets but no lockers = LP not locked
+    score -= 12; hardCap = Math.min(hardCap, 55);
+    checks.push({ name: 'LP Locked', pass: false, value: 'NOT LOCKED — LP can be pulled', weight: 'high', source: 'rugcheck' });
+  }
+
+  // ═══════════════════════════════════════
+  // 13. TOTAL MARKET LIQUIDITY (RugCheck)
+  // ═══════════════════════════════════════
+  if (rc?.totalMarketLiquidity != null && rc.totalMarketLiquidity > 0) {
+    const tvl = rc.totalMarketLiquidity;
+    if (tvl >= 500000)     { checks.push({ name: 'Pool TVL', pass: true,  value: `$${(tvl/1e6).toFixed(2)}M`, weight: 'medium', source: 'rugcheck' }); }
+    else if (tvl >= 50000) { checks.push({ name: 'Pool TVL', pass: true,  value: `$${(tvl/1e3).toFixed(0)}K`, weight: 'medium', source: 'rugcheck' }); }
+    else if (tvl >= 5000)  { checks.push({ name: 'Pool TVL', pass: false, value: `$${(tvl/1e3).toFixed(1)}K — Low`, weight: 'medium', source: 'rugcheck' }); }
+    else                   { score -= 8; checks.push({ name: 'Pool TVL', pass: false, value: `$${tvl.toFixed(0)} — Extremely low`, weight: 'high', source: 'rugcheck' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 14. CREATOR WALLET ANALYSIS
+  // ═══════════════════════════════════════
+  if (rc?.creator) {
+    const creatorBal = rc.creator.balance || 0;
+    const creatorAddr = rc.creator.address || '';
+    if (creatorBal > 0) {
+      // Creator still holds tokens
+      const pctLabel = rc.creator.percentage ? `${rc.creator.percentage.toFixed(1)}%` : 'some';
+      score -= 5;
+      checks.push({ name: 'Creator Wallet', pass: false, value: `Holds ${pctLabel} of supply`, weight: 'medium', source: 'rugcheck' });
+    } else if (creatorAddr) {
+      checks.push({ name: 'Creator Wallet', pass: true, value: 'Empty — creator sold/transferred ✓', weight: 'low', source: 'rugcheck' });
+    }
+  }
+
+  // ═══════════════════════════════════════
+  // 15. INSIDER DETECTION (RugCheck graph)
+  // ═══════════════════════════════════════
+  if (rc?.graphInsidersDetected != null) {
+    if (rc.graphInsidersDetected > 0) {
+      score -= 10; hardCap = Math.min(hardCap, 55);
+      checks.push({ name: 'Insider Wallets', pass: false, value: `${rc.graphInsidersDetected} insider(s) detected`, weight: 'high', source: 'rugcheck' });
+    } else {
+      checks.push({ name: 'Insider Wallets', pass: true, value: 'None detected ✓', weight: 'medium', source: 'rugcheck' });
+    }
+  }
+
+  // ═══════════════════════════════════════
+  // 16. TRANSFER FEE / HIDDEN TAX
+  // ═══════════════════════════════════════
+  if (rc?.transferFee != null && rc.transferFee > 0) {
+    const feePct = rc.transferFee;
+    if (feePct > 10) {
+      score -= 20; hardCap = Math.min(hardCap, 30);
+      checks.push({ name: 'Transfer Fee', pass: false, value: `${feePct}% — EXTREME hidden tax`, weight: 'critical', source: 'rugcheck' });
+    } else if (feePct > 3) {
+      score -= 10;
+      checks.push({ name: 'Transfer Fee', pass: false, value: `${feePct}% — High tax`, weight: 'high', source: 'rugcheck' });
+    } else {
+      checks.push({ name: 'Transfer Fee', pass: false, value: `${feePct}%`, weight: 'low', source: 'rugcheck' });
+    }
+  } else if (rc) {
+    checks.push({ name: 'Transfer Fee', pass: true, value: 'None ✓', weight: 'medium', source: 'rugcheck' });
+  }
+
+  // ═══════════════════════════════════════
+  // 17. PREVIOUSLY RUGGED FLAG
+  // ═══════════════════════════════════════
+  if (rc?.rugged === true) {
+    score -= 30; hardCap = Math.min(hardCap, 10);
+    checks.push({ name: 'Rug History', pass: false, value: 'TOKEN WAS PREVIOUSLY RUGGED', weight: 'critical', source: 'rugcheck' });
+  }
+
+  // ═══════════════════════════════════════
+  // 18. LP PROVIDER COUNT
+  // ═══════════════════════════════════════
+  if (rc?.totalLPProviders != null) {
+    const lps = rc.totalLPProviders;
+    if (lps >= 10)       { checks.push({ name: 'LP Providers', pass: true,  value: `${lps} — Distributed`, weight: 'low', source: 'rugcheck' }); }
+    else if (lps >= 3)   { checks.push({ name: 'LP Providers', pass: true,  value: `${lps}`, weight: 'low', source: 'rugcheck' }); }
+    else if (lps >= 1)   { score -= 5; checks.push({ name: 'LP Providers', pass: false, value: `${lps} — Single LP (rug risk)`, weight: 'medium', source: 'rugcheck' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // 19. MARKET CAP / FDV RATIO
+  // ═══════════════════════════════════════
+  if (jup?.mcap && jup?.fdv && jup.fdv > 0) {
+    const ratio = jup.mcap / jup.fdv;
+    const mcapStr = jup.mcap > 1e9 ? `$${(jup.mcap/1e9).toFixed(2)}B` : jup.mcap > 1e6 ? `$${(jup.mcap/1e6).toFixed(2)}M` : `$${(jup.mcap/1e3).toFixed(0)}K`;
+    if (ratio >= 0.8)      { checks.push({ name: 'Market Cap', pass: true, value: `${mcapStr} (${(ratio*100).toFixed(0)}% circ.)`, weight: 'low', source: 'jupiter' }); }
+    else if (ratio >= 0.3) { checks.push({ name: 'Market Cap', pass: true, value: `${mcapStr} (${(ratio*100).toFixed(0)}% circ.)`, weight: 'low', source: 'jupiter' }); }
+    else                   { score -= 5; checks.push({ name: 'Market Cap', pass: false, value: `${mcapStr} (only ${(ratio*100).toFixed(0)}% circ. — dilution risk)`, weight: 'low', source: 'jupiter' }); }
+  }
+
+  // ═══════════════════════════════════════
+  // SAFETY NET: If no data at all → cap hard
+  // ═══════════════════════════════════════
+  const dataSourceCount = Object.values(sources).filter(Boolean).length;
+  if (dataSourceCount === 0) hardCap = Math.min(hardCap, 30);
+  else if (dataSourceCount === 1) hardCap = Math.min(hardCap, 55);
+
   score = Math.round(Math.max(0, Math.min(hardCap, score)));
-  const verdict = score >= 70 ? 'SECURE' : score >= 50 ? 'CAUTION' : score >= 30 ? 'WARNING' : 'DANGER';
+  const verdict = score >= 75 ? 'SECURE' : score >= 55 ? 'MODERATE' : score >= 35 ? 'WARNING' : 'DANGER';
 
   const result = {
     score, verdict,
-    tier: score >= 70 ? 'safe' : score >= 50 ? 'caution' : score >= 30 ? 'warning' : 'danger',
-    address: mintAddress, checks,
-    details: { mintAuthActive: !!mintAuth, freezeAuthActive: !!freezeAuth, rugcheckRaw: rc?.score ?? null },
+    tier: score >= 75 ? 'safe' : score >= 55 ? 'caution' : score >= 35 ? 'warning' : 'danger',
+    address: mintAddress,
+    name: jup?.name || null,
+    symbol: jup?.symbol || null,
+    checks,
+    sources,
+    details: {
+      mintAuthDisabled:    mintAuth,
+      freezeAuthDisabled:  freezeAuth,
+      rugcheckRaw:         rc?.score ?? null,
+      organicScore:        jup?.organicScore ?? null,
+      liquidity:           jup?.liquidity ?? null,
+      holderCount:         holderCount,
+      mcap:                jup?.mcap ?? null,
+      verified:            jup?.isVerified ?? null,
+      cexes:               jup?.cexes ?? [],
+      lpLocked:            rc?.lockers?.length > 0,
+      totalMarketLiquidity: rc?.totalMarketLiquidity ?? null,
+      insidersDetected:    rc?.graphInsidersDetected ?? null,
+      transferFee:         rc?.transferFee ?? null,
+      rugged:              rc?.rugged ?? false,
+      lpProviders:         rc?.totalLPProviders ?? null,
+      creator:             rc?.creator?.address ?? null,
+    },
   };
 
   scanCache.set(mintAddress, { result, timestamp: Date.now() });

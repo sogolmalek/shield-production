@@ -160,8 +160,8 @@ function updateStats() {
 // ── Display scan result ──
 function displayResult(data, addr) {
   const score   = data.score;
-  const tier    = score >= 70 ? 'safe' : score >= 50 ? 'caution' : score >= 30 ? 'warning' : 'danger';
-  const verdict = data.verdict || (score >= 70 ? 'SECURE' : score >= 50 ? 'CAUTION' : score >= 30 ? 'WARNING' : 'DANGER');
+  const tier    = score >= 75 ? 'safe' : score >= 55 ? 'caution' : score >= 35 ? 'warning' : 'danger';
+  const verdict = data.verdict || (score >= 75 ? 'SECURE' : score >= 55 ? 'MODERATE' : score >= 35 ? 'WARNING' : 'DANGER');
   const colors  = { safe: '#34D399', caution: '#FBBF24', warning: '#F59E0B', danger: '#EF4444' };
   const bgs     = { safe: 'rgba(52,211,153,.08)', caution: 'rgba(251,191,36,.08)', warning: 'rgba(245,158,11,.08)', danger: 'rgba(239,68,68,.08)' };
 
@@ -172,8 +172,12 @@ function displayResult(data, addr) {
   if (data.checks && el('rCh')) {
     let html = '';
     for (const c of data.checks) {
-      const name = c[0], ok = c[1], val = c[2];
-      html += `<div class="rr"><span class="l"><span class="${ok ? 'p' : 'f'}" style="font-size:10px;width:14px;text-align:center">${ok ? '✓' : '✗'}</span>${name}</span><span class="v ${ok ? 'p' : 'f'}">${val}</span></div>`;
+      // Support both old format [name, ok, val] and new format {name, pass, value}
+      const name = c.name || c[0];
+      const ok   = c.pass ?? c[1];
+      const val  = c.value || c[2];
+      const src  = c.source ? ` <span style="opacity:.3;font-size:8px">${c.source}</span>` : '';
+      html += `<div class="rr"><span class="l"><span class="${ok ? 'p' : 'f'}" style="font-size:10px;width:14px;text-align:center">${ok ? '✓' : '✗'}</span>${name}</span><span class="v ${ok ? 'p' : 'f'}">${val}${src}</span></div>`;
     }
     el('rCh').innerHTML = html;
   }
