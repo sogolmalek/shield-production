@@ -262,18 +262,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'RESOLVE_DEXSCREENER') {
     (async () => {
       try {
-        const STABLES = new Set([
+        const STABLE_ADDRS = new Set([
           'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
           'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
           'So11111111111111111111111111111111111111112',
           '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
           'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',
         ]);
+        const STABLE_SYMBOLS = new Set(['USDC', 'USDT', 'SOL', 'WSOL', 'stSOL', 'mSOL', 'WETH', 'DAI', 'BUSD']);
+
+        function isStable(token) {
+          if (!token) return false;
+          return STABLE_ADDRS.has(token.address) || STABLE_SYMBOLS.has(token.symbol?.toUpperCase());
+        }
 
         const addr = msg.pairAddress;
         let tokenAddr = null, tokenSymbol = null, tokenName = null, isStablePair = false, baseSymbol = null, quoteSymbol = null;
 
-        // Method 1: /latest/dex/pairs/ (pair address lookup)
+        // Method 1: /latest/dex/pairs/
         try {
           const res = await fetchRetry(`https://api.dexscreener.com/latest/dex/pairs/solana/${addr}`, {}, { retries: 1, timeout: 6000 });
           if (res.ok) {
@@ -284,18 +290,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const base = pair.baseToken;
               const quote = pair.quoteToken;
               baseSymbol = base.symbol; quoteSymbol = quote.symbol;
-              if (base.address && !STABLES.has(base.address)) {
-                tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
-              } else if (quote.address && !STABLES.has(quote.address)) {
-                tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
-              } else {
+              const baseIsStable = isStable(base);
+              const quoteIsStable = isStable(quote);
+
+              if (baseIsStable && quoteIsStable) {
                 isStablePair = true;
+              } else if (!baseIsStable) {
+                tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
+              } else {
+                tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
               }
             }
           }
         } catch (e) { console.log('[SHIELD] DexScreener pairs API error:', e.message); }
 
-        // Method 2: /token-pairs/v1/ (token address lookup — handles case where URL is token address not pair)
+        // Method 2: /token-pairs/v1/
         if (!tokenAddr && !isStablePair) {
           try {
             const res2 = await fetchRetry(`https://api.dexscreener.com/token-pairs/v1/solana/${addr}`, {}, { retries: 1, timeout: 6000 });
@@ -304,15 +313,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               console.log('[SHIELD] DexScreener token-pairs API:', Array.isArray(pairs) ? pairs.length + ' pairs' : 'not array');
               const pairList = Array.isArray(pairs) ? pairs : [];
               if (pairList.length > 0) {
-                // Find the pair with highest liquidity
                 const sorted = pairList.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
                 const best = sorted[0];
                 if (best?.baseToken && best?.quoteToken) {
                   const base = best.baseToken;
                   const quote = best.quoteToken;
-                  if (base.address && !STABLES.has(base.address)) {
+                  const baseIsStable = isStable(base);
+                  const quoteIsStable = isStable(quote);
+
+                  if (baseIsStable && quoteIsStable) {
+                    isStablePair = true;
+                    baseSymbol = base.symbol; quoteSymbol = quote.symbol;
+                  } else if (!baseIsStable) {
                     tokenAddr = base.address; tokenSymbol = base.symbol; tokenName = base.name;
-                  } else if (quote.address && !STABLES.has(quote.address)) {
+                  } else {
                     tokenAddr = quote.address; tokenSymbol = quote.symbol; tokenName = quote.name;
                   }
                 }
