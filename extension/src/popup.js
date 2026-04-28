@@ -94,6 +94,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const allPatterns = [
         /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
         /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
         /\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
         /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
         /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,

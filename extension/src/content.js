@@ -221,8 +221,6 @@
     'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
     'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 'mSOL',
     '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj': 'stSOL',
-    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'BONK',
-    'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL': 'JTO',
   };
 
   function showBar(mint) {
@@ -247,6 +245,7 @@
 
     const bar = document.createElement('div');
     bar.id = 'shield-bar';
+    bar.setAttribute('data-shield-token', mint);
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#0d0f14;border-bottom:2px solid rgba(139,92,246,.4);padding:10px 16px;display:flex;align-items:center;gap:12px;font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#e4e7ef;box-shadow:0 4px 24px rgba(0,0,0,.6)';
     bar.innerHTML = '<span class="sb-logo">\u26E8 SHIELD</span><span class="sb-score loading"><span class="sb-spinner"></span>Scanning</span><span class="sb-verdict" style="opacity:.5">Analyzing on-chain data\u2026</span>';
 
@@ -352,12 +351,14 @@
     }
 
     // ── Jupiter (all URL formats) ──
-    // jup.ag/swap/SOL-XXX, jup.ag/swap?outputMint=XXX, jup.ag/?outputMint=XXX
+    // jup.ag/swap/SOL-XXX, jup.ag/swap?outputMint=XXX, jup.ag/tokens/XXX
     if (host.includes('jup.ag') || host.includes('jupiter.ag')) {
       const jupPatterns = [
         /[?&]outputMint=([1-9A-HJ-NP-Za-km-z]{32,44})/,
         /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
         /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+        /\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
       ];
       for (const p of jupPatterns) {
         const m = href.match(p);
@@ -575,12 +576,30 @@
     }, 2000);
   }
 
-  // MutationObserver: catch new articles
+  // MutationObserver: catch new articles AND re-detect URLs on DOM changes
   let mutDebounce = null;
+  let urlDebounce = null;
   function startMutationObserver() {
     new MutationObserver(() => {
+      // Twitter article scanning
       clearTimeout(mutDebounce);
       mutDebounce = setTimeout(scanVisibleArticles, 300);
+
+      // Re-run URL detection on DOM change — catches SPAs that change content
+      clearTimeout(urlDebounce);
+      urlDebounce = setTimeout(() => {
+        if (barLocked) return; // DexScreener is resolving — don't interfere
+        const currentURL = location.href;
+        const currentMint = extractMintFromURL(currentURL);
+        if (currentMint) {
+          const bar = document.getElementById('shield-bar');
+          const barMint = bar?.getAttribute('data-shield-token');
+          if (currentMint !== barMint) {
+            removeBar();
+            detectURL();
+          }
+        }
+      }, 1000); // 1s debounce — enough for SPA renders
     }).observe(document.body, { childList: true, subtree: true });
   }
 
@@ -683,6 +702,7 @@
       /\/(?:solana|token\/solana)\/([a-zA-Z0-9]{32,44})/i,
       /\/swap\/[A-Za-z0-9]+-([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /\/swap\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
+      /\/tokens\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /\/sol\/token\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /\/token\/(?:solana\/)?([1-9A-HJ-NP-Za-km-z]{32,44})/,
       /\/address\/([1-9A-HJ-NP-Za-km-z]{32,44})/,
