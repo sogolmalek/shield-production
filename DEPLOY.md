@@ -32,8 +32,8 @@ git push -u origin main
    - **Start Command:** `node server.js`
    - **Instance Type:** Free
 5. Environment Variables → Add:
-   - `ALCHEMY_RPC` = `https://solana-mainnet.g.alchemy.com/v2/FE1Fd3x7PlqkZYxMqQpP3orTaf1dsmG4`
-   - `GOLDRUSH_API_KEY` = `cqt_rQVgy4MyC3CgJcgvVBR3BFgR9Dgm`
+   - `ALCHEMY_RPC` = `https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY`
+   - `GOLDRUSH_API_KEY` = `YOUR_GOLDRUSH_KEY`
 6. Click **"Deploy Web Service"**
 7. Wait 2-3 min → You get a URL like: `https://shield-api-xxxx.onrender.com`
 8. Test: open that URL in browser → should see JSON with "status: live"
